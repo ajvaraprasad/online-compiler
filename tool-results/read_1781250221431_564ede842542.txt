@@ -1,0 +1,1006 @@
+     1→/**
+     2→ * ═══════════════════════════════════════════════════════════════════════════
+     3→ * CodeForge — Custom Next.js Server with Embedded WebSocket Terminal (v5.2)
+     4→ * ═══════════════════════════════════════════════════════════════════════════
+     5→ *
+     6→ * Runs both Next.js (port 3000) and the WebSocket Terminal Service (port 3002)
+     7→ * inside a single process — keeping the terminal service alive in sandbox
+     8→ * environments where background processes get killed.
+     9→ *
+    10→ * Terminal Protocol: JSON messages over WebSocket (ws)
+    11→ *   Client → Server:
+    12→ *     { type: "execute", code, language, requestId, rows, cols }
+    13→ *     { type: "stdin", requestId, data }
+    14→ *     { type: "resize", requestId, rows, cols }
+    15→ *     { type: "kill", requestId }
+    16→ *
+    17→ *   Server → Client:
+    18→ *     { type: "started", requestId, ... }
+    19→ *     { type: "phase", requestId, phase, status, ... }
+    20→ *     { type: "output", requestId, data }
+    21→ *     { type: "stderr", requestId, data }
+    22→ *     { type: "exit", requestId, exitCode, executionTime, ... }
+    23→ *     { type: "error", requestId, message }
+    24→ */
+    25→
+    26→import { createServer, IncomingMessage, ServerResponse } from 'http';
+    27→import { WebSocketServer, WebSocket } from 'ws';
+    28→import { spawn, ChildProcess } from 'child_process';
+    29→import { writeFile, mkdir, rm } from 'fs/promises';
+    30→import { existsSync } from 'fs';
+    31→import { join } from 'path';
+    32→import { tmpdir } from 'os';
+    33→import { randomUUID } from 'crypto';
+    34→import { parse } from 'url';
+    35→
+    36→// ─── Next.js Setup ──────────────────────────────────────────────────────────
+    37→
+    38→const dev = process.env.NODE_ENV !== 'production';
+    39→const hostname = '0.0.0.0';
+    40→const port = 3000;
+    41→
+    42→// eslint-disable-next-line @typescript-eslint/no-require-imports
+    43→const next = require('next');
+    44→const app = next({ dev, hostname, port });
+    45→const handle = app.getRequestHandler();
+    46→
+    47→// ─── PTY Import ─────────────────────────────────────────────────────────────
+    48→
+    49→let pty: any = null;
+    50→let ptyAvailable = false;
+    51→try {
+    52→  // eslint-disable-next-line @typescript-eslint/no-require-imports
+    53→  pty = require('node-pty');
+    54→  ptyAvailable = true;
+    55→  console.log('[Server] node-pty loaded successfully');
+    56→} catch (e) {
+    57→  console.warn('[Server] node-pty NOT available, falling back to pipes:', (e as Error).message);
+    58→}
+    59→
+    60→// ─── Compiler Pipeline Import ───────────────────────────────────────────────
+    61→
+    62→let pipelineModule: any = null;
+    63→let vmModule: any = null;
+    64→
+    65→async function loadPipeline() {
+    66→  if (!pipelineModule) {
+    67→    try {
+    68→      pipelineModule = await import('./src/lib/compiler/pipeline');
+    69→      console.log('[Server] Compiler pipeline loaded');
+    70→    } catch (e) {
+    71→      console.warn('[Server] Could not load compiler pipeline:', (e as Error).message);
+    72→    }
+    73→  }
+    74→  return pipelineModule;
+    75→}
+    76→
+    77→async function loadVM() {
+    78→  if (!vmModule) {
+    79→    try {
+    80→      vmModule = await import('./src/lib/compiler/vm');
+    81→      console.log('[Server] IR VM loaded');
+    82→    } catch (e) {
+    83→      console.warn('[Server] Could not load IR VM:', (e as Error).message);
+    84→    }
+    85→  }
+    86→  return vmModule;
+    87→}
+    88→
+    89→// ─── Types ───────────────────────────────────────────────────────────────────
+    90→
+    91→interface ActiveExecution {
+    92→  ptyProcess: any;
+    93→  process?: ChildProcess;
+    94→  tempDir: string;
+    95→  startTime: number;
+    96→  killed: boolean;
+    97→  ws: WebSocket;
+    98→  executionMode: string;
+    99→}
+   100→
+   101→interface PipelineDiagnostic {
+   102→  type: string;
+   103→  phase: string;
+   104→  message: string;
+   105→  line?: number;
+   106→  col?: number;
+   107→  severity: string;
+   108→  raw?: string;
+   109→}
+   110→
+   111→// ─── State ───────────────────────────────────────────────────────────────────
+   112→
+   113→const activeExecutions = new Map<string, ActiveExecution>();
+   114→
+   115→const ALLOWED_LANGUAGES = ['python', 'c', 'cpp', 'java', 'javascript'];
+   116→const MAX_CODE_SIZE = 256 * 1024;
+   117→const INTERACTIVE_TIMEOUT = 5 * 60_000; // 5 minutes
+   118→
+   119→const RESTRICTED_ENV: Record<string, string> = {
+   120→  PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+   121→  HOME: '/tmp',
+   122→  USER: 'nobody',
+   123→  LANG: 'en_US.UTF-8',
+   124→  TERM: 'xterm-256color',
+   125→  PYTHONIOENCODING: 'utf-8',
+   126→  PYTHONUNBUFFERED: '1',
+   127→  NODE_OPTIONS: '--max-old-space-size=256',
+   128→};
+   129→
+   130→// ─── Language Configuration ─────────────────────────────────────────────────
+   131→
+   132→function getLanguageConfig(language: string, tempDir: string): {
+   133→  fileName: string;
+   134→  compileCmd?: { command: string; args: string[] };
+   135→  runCmd: { command: string; args: string[] };
+   136→  prependCode?: string;
+   137→} | null {
+   138→  switch (language) {
+   139→    case 'python':
+   140→      return {
+   141→        fileName: 'main.py',
+   142→        runCmd: { command: 'python3', args: ['-u', join(tempDir, 'main.py')] },
+   143→      };
+   144→    case 'c':
+   145→      return {
+   146→        fileName: 'main.c',
+   147→        compileCmd: {
+   148→          command: 'gcc',
+   149→          args: [
+   150→            '-o', join(tempDir, 'main'), join(tempDir, 'main.c'),
+   151→            '-lm', '-Wall', '-Wextra', '-Werror=return-type',
+   152→            '-Werror=implicit-function-declaration',
+   153→            '-std=c17',
+   154→          ],
+   155→        },
+   156→        runCmd: { command: join(tempDir, 'main'), args: [] },
+   157→      };
+   158→    case 'cpp':
+   159→      return {
+   160→        fileName: 'main.cpp',
+   161→        compileCmd: {
+   162→          command: 'g++',
+   163→          args: [
+   164→            '-o', join(tempDir, 'main'), join(tempDir, 'main.cpp'),
+   165→            '-lm', '-Wall', '-Wextra', '-Werror=return-type',
+   166→            '-std=c++17',
+   167→          ],
+   168→        },
+   169→        runCmd: { command: join(tempDir, 'main'), args: [] },
+   170→      };
+   171→    case 'java':
+   172→      return {
+   173→        fileName: 'Main.java',
+   174→        runCmd: { command: 'java', args: [join(tempDir, 'Main.java')] },
+   175→      };
+   176→    case 'javascript':
+   177→      return {
+   178→        fileName: 'main.js',
+   179→        runCmd: { command: 'node', args: [join(tempDir, 'main.js')] },
+   180→        prependCode: "process.stdin.on('end', () => process.exit(0));\n\n",
+   181→      };
+   182→    default:
+   183→      return null;
+   184→  }
+   185→}
+   186→
+   187→// ─── Compile Step ────────────────────────────────────────────────────────────
+   188→
+   189→async function compileStep(
+   190→  compileCmd: { command: string; args: string[] },
+   191→  tempDir: string,
+   192→  emitPhase: (phase: string, status: string, data?: Record<string, unknown>) => void,
+   193→): Promise<{ success: boolean; stderr: string; diagnostics: PipelineDiagnostic[] }> {
+   194→  return new Promise((resolve) => {
+   195→    const proc = spawn(compileCmd.command, compileCmd.args, {
+   196→      cwd: tempDir,
+   197→      env: RESTRICTED_ENV,
+   198→    });
+   199→    let stderr = '';
+   200→
+   201→    proc.stdout?.on('data', () => {});
+   202→    proc.stderr?.on('data', (data: Buffer) => {
+   203→      stderr += data.toString();
+   204→    });
+   205→    proc.on('error', (err) => {
+   206→      resolve({
+   207→        success: false,
+   208→        stderr: `Compilation failed: ${err.message}`,
+   209→        diagnostics: [{
+   210→          type: 'compilation_error',
+   211→          phase: 'compilation',
+   212→          message: `Compiler not found: ${err.message}`,
+   213→          severity: 'error',
+   214→        }],
+   215→      });
+   216→    });
+   217→    proc.on('close', async () => {
+   218→      const pipeline = await loadPipeline();
+   219→      const diagnostics: PipelineDiagnostic[] = pipeline
+   220→        ? pipeline.parseCompilationErrors(stderr, '').map((d: any) => ({
+   221→            type: d.type || 'compilation_error',
+   222→            phase: d.phase,
+   223→            message: d.message,
+   224→            line: d.line,
+   225→            col: d.col,
+   226→            severity: d.severity,
+   227→            raw: d.raw,
+   228→          }))
+   229→        : [];
+   230→
+   231→      resolve({
+   232→        success: !stderr || !stderr.includes('error'),
+   233→        stderr,
+   234→        diagnostics,
+   235→      });
+   236→    });
+   237→  });
+   238→}
+   239→
+   240→// ─── Cleanup ────────────────────────────────────────────────────────────────
+   241→
+   242→async function cleanupDir(dir: string) {
+   243→  try {
+   244→    if (existsSync(dir)) {
+   245→      await rm(dir, { recursive: true, force: true });
+   246→    }
+   247→  } catch {}
+   248→}
+   249→
+   250→function killPtyProcess(execution: ActiveExecution) {
+   251→  try {
+   252→    if (execution.ptyProcess) {
+   253→      execution.ptyProcess.kill('SIGKILL');
+   254→    } else if (execution.process) {
+   255→      if (execution.process.pid) {
+   256→        try { process.kill(-execution.process.pid, 'SIGKILL'); } catch { execution.process.kill('SIGKILL'); }
+   257→      }
+   258→    }
+   259→  } catch {}
+   260→}
+   261→
+   262→// ─── Send message to client ─────────────────────────────────────────────────
+   263→
+   264→function sendMsg(ws: WebSocket, msg: Record<string, unknown>) {
+   265→  if (ws.readyState === WebSocket.OPEN) {
+   266→    ws.send(JSON.stringify(msg));
+   267→  }
+   268→}
+   269→
+   270→// ─── Build Summary ─────────────────────────────────────────────────────────
+   271→
+   272→function buildSummary(exitCode: number, diagnostics: PipelineDiagnostic[], executionMode: string) {
+   273→  const runtimeDiags = diagnostics.filter(d => d.phase === 'execution' && d.type === 'runtime_error');
+   274→  return {
+   275→    success: exitCode === 0 && runtimeDiags.length === 0,
+   276→    executionMode,
+   277→    diagnostics: diagnostics.slice(0, 50),
+   278→    errorCounts: {
+   279→      lexical: diagnostics.filter(d => d.phase === 'lexical_analysis').length,
+   280→      parsing: diagnostics.filter(d => d.phase === 'parsing').length,
+   281→      semantic: diagnostics.filter(d => d.phase === 'semantic_analysis').length,
+   282→      security: diagnostics.filter(d => d.phase === 'security_analysis').length,
+   283→      compilation: diagnostics.filter(d => d.phase === 'compilation' && d.type === 'compilation_error').length,
+   284→      runtime: runtimeDiags.length,
+   285→    },
+   286→  };
+   287→}
+   288→
+   289→// ─── PTY-based execution ──────────────────────────────────────────────────
+   290→
+   291→function startWithPty(
+   292→  execution: ActiveExecution,
+   293→  langConfig: NonNullable<ReturnType<typeof getLanguageConfig>>,
+   294→  tempDir: string,
+   295→  termRows: number,
+   296→  termCols: number,
+   297→  startTime: number,
+   298→  executionMode: string,
+   299→  requestId: string,
+   300→  ws: WebSocket,
+   301→  emitPhase: (phase: string, status: string, data?: Record<string, unknown>) => void,
+   302→  emitOutput: (data: string) => void,
+   303→  emitExit: (exitCode: number, executionTime: number, summary?: Record<string, unknown>) => void,
+   304→  allDiagnostics: PipelineDiagnostic[],
+   305→) {
+   306→  const runCmd = langConfig.runCmd;
+   307→  const args = runCmd.args.length > 0 ? runCmd.args : [];
+   308→
+   309→  let ptyProcess;
+   310→  try {
+   311→    ptyProcess = pty.spawn(runCmd.command, args, {
+   312→      name: 'xterm-256color',
+   313→      cols: termCols,
+   314→      rows: termRows,
+   315→      cwd: tempDir,
+   316→      env: RESTRICTED_ENV,
+   317→    });
+   318→    console.log(`[Server/WS] PTY spawned for ${requestId}, PID=${ptyProcess.pid}`);
+   319→  } catch (err: any) {
+   320→    console.error(`[Server/WS] PTY spawn failed:`, err.message);
+   321→    emitOutput(`\x1b[31mError: Failed to start PTY: ${err.message}\x1b[0m\r\n`);
+   322→    emitExit(1, Date.now() - startTime);
+   323→    activeExecutions.delete(requestId);
+   324→    cleanupDir(tempDir);
+   325→    return;
+   326→  }
+   327→
+   328→  execution.ptyProcess = ptyProcess;
+   329→
+   330→  emitPhase('execution', 'running', {
+   331→    pid: ptyProcess.pid,
+   332→    mode: executionMode,
+   333→  });
+   334→
+   335→  // Safety timeout
+   336→  const timeoutHandle = setTimeout(() => {
+   337→    if (execution.killed) return;
+   338→    execution.killed = true;
+   339→    killPtyProcess(execution);
+   340→    emitOutput('\r\n\x1b[31mError: Execution timed out\x1b[0m\r\n');
+   341→    allDiagnostics.push({
+   342→      type: 'timeout',
+   343→      phase: 'execution',
+   344→      message: `Execution timed out after ${INTERACTIVE_TIMEOUT / 1000}s`,
+   345→      severity: 'error',
+   346→    });
+   347→    emitExit(-1, INTERACTIVE_TIMEOUT, buildSummary(-1, allDiagnostics, executionMode));
+   348→    activeExecutions.delete(requestId);
+   349→    cleanupDir(tempDir);
+   350→  }, INTERACTIVE_TIMEOUT);
+   351→
+   352→  // Stream PTY output directly to the client via WebSocket
+   353→  ptyProcess.onData((data: string) => {
+   354→    emitOutput(data);
+   355→  });
+   356→
+   357→  // Handle process exit
+   358→  ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
+   359→    clearTimeout(timeoutHandle);
+   360→    if (!execution.killed) {
+   361→      emitPhase('output_processing', 'completed', {});
+   362→      emitExit(exitCode, Date.now() - startTime, buildSummary(exitCode, allDiagnostics, executionMode));
+   363→    }
+   364→    activeExecutions.delete(requestId);
+   365→    cleanupDir(tempDir);
+   366→  });
+   367→}
+   368→
+   369→// ─── Pipe-based fallback ──────────────────────────────────────────────────
+   370→
+   371→function startWithPipes(
+   372→  execution: ActiveExecution,
+   373→  langConfig: NonNullable<ReturnType<typeof getLanguageConfig>>,
+   374→  tempDir: string,
+   375→  startTime: number,
+   376→  executionMode: string,
+   377→  requestId: string,
+   378→  ws: WebSocket,
+   379→  emitPhase: (phase: string, status: string, data?: Record<string, unknown>) => void,
+   380→  emitOutput: (data: string) => void,
+   381→  emitExit: (exitCode: number, executionTime: number, summary?: Record<string, unknown>) => void,
+   382→) {
+   383→  const runCmd = langConfig.runCmd;
+   384→  const runProc = spawn(runCmd.command, runCmd.args, {
+   385→    cwd: tempDir,
+   386→    env: RESTRICTED_ENV,
+   387→    stdio: ['pipe', 'pipe', 'pipe'],
+   388→  });
+   389→
+   390→  execution.process = runProc;
+   391→
+   392→  emitPhase('execution', 'running', {
+   393→    pid: runProc.pid,
+   394→    mode: executionMode,
+   395→  });
+   396→
+   397→  const timeoutHandle = setTimeout(() => {
+   398→    if (execution.killed) return;
+   399→    execution.killed = true;
+   400→    try { runProc.stdin?.end(); } catch {}
+   401→    killPtyProcess(execution);
+   402→    emitOutput('\n\x1b[31mError: Execution timed out\x1b[0m');
+   403→    emitExit(-1, INTERACTIVE_TIMEOUT);
+   404→    activeExecutions.delete(requestId);
+   405→    cleanupDir(tempDir);
+   406→  }, INTERACTIVE_TIMEOUT);
+   407→
+   408→  runProc.stdout?.on('data', (data: Buffer) => {
+   409→    emitOutput(data.toString());
+   410→  });
+   411→
+   412→  runProc.stderr?.on('data', (data: Buffer) => {
+   413→    emitOutput(`\x1b[31m${data.toString()}\x1b[0m`);
+   414→  });
+   415→
+   416→  runProc.on('error', (err) => {
+   417→    clearTimeout(timeoutHandle);
+   418→    emitOutput(`\x1b[31mError: Failed to execute: ${err.message}\x1b[0m`);
+   419→    emitExit(1, Date.now() - startTime);
+   420→    activeExecutions.delete(requestId);
+   421→    cleanupDir(tempDir);
+   422→  });
+   423→
+   424→  runProc.on('close', (exitCode) => {
+   425→    clearTimeout(timeoutHandle);
+   426→    if (!execution.killed) {
+   427→      emitExit(exitCode ?? 1, Date.now() - startTime);
+   428→    }
+   429→    activeExecutions.delete(requestId);
+   430→    cleanupDir(tempDir);
+   431→  });
+   432→}
+   433→
+   434→// ─── Handle Execute ─────────────────────────────────────────────────────────
+   435→
+   436→async function handleExecute(ws: WebSocket, msg: any) {
+   437→  const { code, language, requestId, rows, cols } = msg;
+   438→
+   439→  // Validation
+   440→  if (!code || typeof code !== 'string') {
+   441→    sendMsg(ws, { type: 'error', requestId, message: 'Code is required' });
+   442→    return;
+   443→  }
+   444→
+   445→  if (!ALLOWED_LANGUAGES.includes(language)) {
+   446→    sendMsg(ws, { type: 'error', requestId, message: `Unsupported language: ${language}` });
+   447→    return;
+   448→  }
+   449→
+   450→  if (Buffer.byteLength(code, 'utf-8') > MAX_CODE_SIZE) {
+   451→    sendMsg(ws, { type: 'error', requestId, message: `Code size exceeds limit (${MAX_CODE_SIZE} bytes)` });
+   452→    return;
+   453→  }
+   454→
+   455→  if (activeExecutions.has(requestId)) {
+   456→    sendMsg(ws, { type: 'error', requestId, message: 'This requestId is already being executed' });
+   457→    return;
+   458→  }
+   459→
+   460→  // Setup
+   461→  const execId = randomUUID().slice(0, 8);
+   462→  const tempDir = join(tmpdir(), `exec_${execId}`);
+   463→  const langConfig = getLanguageConfig(language, tempDir);
+   464→
+   465→  if (!langConfig) {
+   466→    sendMsg(ws, { type: 'error', requestId, message: 'Invalid language configuration' });
+   467→    return;
+   468→  }
+   469→
+   470→  await mkdir(tempDir, { recursive: true });
+   471→
+   472→  let codeToWrite = code;
+   473→  if (langConfig.prependCode) {
+   474→    codeToWrite = langConfig.prependCode + code;
+   475→  }
+   476→
+   477→  const filePath = join(tempDir, langConfig.fileName);
+   478→  await writeFile(filePath, codeToWrite, 'utf-8');
+   479→
+   480→  const startTime = Date.now();
+   481→  const termRows = rows || 24;
+   482→  const termCols = cols || 80;
+   483→
+   484→  // Store execution
+   485→  const execution: ActiveExecution = {
+   486→    ptyProcess: null,
+   487→    tempDir,
+   488→    startTime,
+   489→    killed: false,
+   490→    ws,
+   491→    executionMode: 'native',
+   492→  };
+   493→  activeExecutions.set(requestId, execution);
+   494→
+   495→  // Emit started event
+   496→  sendMsg(ws, {
+   497→    type: 'started',
+   498→    requestId,
+   499→    timestamp: startTime,
+   500→    engine: 'CodeForge v5.2 — Embedded WebSocket Terminal',
+   501→  });
+   502→
+   503→  // Helper: emit phase event
+   504→  const emitPhase = (phase: string, status: string, data?: Record<string, unknown>) => {
+   505→    sendMsg(ws, { type: 'phase', requestId, phase, status, ...data });
+   506→  };
+   507→
+   508→  // Helper: emit output (PTY data)
+   509→  const emitOutput = (data: string) => {
+   510→    sendMsg(ws, { type: 'output', requestId, data });
+   511→  };
+   512→
+   513→  // Helper: emit exit
+   514→  const emitExit = (exitCode: number, executionTime: number, summary?: Record<string, unknown>) => {
+   515→    sendMsg(ws, { type: 'exit', requestId, exitCode, executionTime, summary });
+   516→  };
+   517→
+   518→  // ═══════════════════════════════════════════════════════════════
+   519→  //  RUN FULL COMPILER PIPELINE (Phases 1-7)
+   520→  // ═══════════════════════════════════════════════════════════════
+   521→  try {
+   522→    const pipeMod = await loadPipeline();
+   523→    const vmMod = await loadVM();
+   524→
+   525→    let executionMode = 'native';
+   526→    let codegenResult: any = null;
+   527→    const allDiagnostics: PipelineDiagnostic[] = [];
+   528→
+   529→    if (pipeMod) {
+   530→      const pipeline = new pipeMod.CompilerPipeline({
+   531→        code,
+   532→        language,
+   533→        onEvent: (eventType: string, eventData: string) => {
+   534→          if (eventType === 'phase') {
+   535→            try {
+   536→              const parsed = JSON.parse(eventData);
+   537→              sendMsg(ws, { type: 'phase', requestId, ...parsed });
+   538→            } catch {
+   539→              sendMsg(ws, { type: 'phase', requestId, phase: 'unknown', status: 'running', data: eventData });
+   540→            }
+   541→          } else if (eventType === 'stderr') {
+   542→            sendMsg(ws, { type: 'stderr', requestId, data: eventData });
+   543→          }
+   544→        },
+   545→      });
+   546→
+   547→      const pipelineResult = await pipeline.run();
+   548→
+   549→      for (const d of pipelineResult.diagnostics) {
+   550→        allDiagnostics.push({
+   551→          type: d.type || d.phase,
+   552→          phase: d.phase,
+   553→          message: d.message,
+   554→          line: d.line,
+   555→          col: d.col,
+   556→          severity: d.severity,
+   557→          raw: d.raw,
+   558→        });
+   559→      }
+   560→
+   561→      if (!pipelineResult.success) {
+   562→        console.log(`[Server/WS] Pipeline blocked for ${requestId}: analysis failed`);
+   563→
+   564→        emitExit(1, Date.now() - startTime, {
+   565→          success: false,
+   566→          diagnostics: allDiagnostics.slice(0, 50),
+   567→          phases: Object.fromEntries(
+   568→            Object.entries(pipelineResult.phases).map(([k, v]: [string, any]) => [k, v.status])
+   569→          ),
+   570→          metrics: pipelineResult.metrics,
+   571→        });
+   572→
+   573→        activeExecutions.delete(requestId);
+   574→        cleanupDir(tempDir);
+   575→        return;
+   576→      }
+   577→
+   578→      const executionPlan = pipeline.getExecutionPlan();
+   579→      codegenResult = pipeline.getCodegenResult();
+   580→      executionMode = executionPlan?.mode || 'native';
+   581→
+   582→      console.log(`[Server/WS] Execution plan for ${requestId}: mode=${executionMode}, reason=${executionPlan?.reason}`);
+   583→
+   584→      // SAFETY CHECK: If the code contains input functions, NEVER use IR VM
+   585→      const INPUT_PATTERNS: Record<string, RegExp[]> = {
+   586→        python: [/\binput\s*\(/, /\bsys\.stdin/],
+   587→        javascript: [/\breadline\s*\(/, /\bprompt\s*\(/, /process\.stdin/],
+   588→        c: [/\bscanf\s*\(/, /\bgets\s*\(/, /\bfgets\s*\(/, /\bgetchar\s*\(/],
+   589→        cpp: [/\bcin\s*>>/, /\bscanf\s*\(/, /\bgetline\s*\(/],
+   590→        java: [/\bScanner\s/, /System\.in/],
+   591→      };
+   592→      const inputPatterns = INPUT_PATTERNS[language] || [];
+   593→      const needsInteractiveTerminal = inputPatterns.some(p => p.test(code));
+   594→
+   595→      if (executionMode === 'ir_vm' && needsInteractiveTerminal) {
+   596→        console.log(`[Server/WS] Forcing native mode for ${requestId}: code contains input functions requiring PTY`);
+   597→        executionMode = 'native';
+   598→      } else if (executionMode === 'ir_vm' && vmMod) {
+   599→        // ── IR VM Execution ──────────────────────────────────────
+   600→        emitPhase('compilation', 'skipped', { message: 'Using IR Virtual Machine — no compilation needed' });
+   601→        emitPhase('execution', 'running', { mode: 'ir_vm' });
+   602→
+   603→        const optimizedProgram = pipeline.getOptimizationResult()?.program ?? pipeline.getIRResult()?.program;
+   604→        if (!optimizedProgram) {
+   605→          emitOutput('\x1b[31mError: IR program not available for VM execution\x1b[0m\r\n');
+   606→          emitExit(1, Date.now() - startTime);
+   607→          activeExecutions.delete(requestId);
+   608→          cleanupDir(tempDir);
+   609→          return;
+   610→        }
+   611→
+   612→        const vmStartTime = Date.now();
+   613→        const vmResult = vmMod.executeIR(optimizedProgram);
+   614→        const vmExecutionTime = Date.now() - vmStartTime;
+   615→
+   616→        for (const line of vmResult.output) {
+   617→          emitOutput(line + '\n');
+   618→        }
+   619→
+   620→        if (vmResult.error) {
+   621→          emitOutput(`\x1b[31m${vmResult.error}\x1b[0m\r\n`);
+   622→        }
+   623→
+   624→        emitPhase('execution', vmResult.success ? 'completed' : 'failed', {
+   625→          durationMs: vmExecutionTime,
+   626→          mode: 'ir_vm',
+   627→          stepsExecuted: vmResult.stepsExecuted,
+   628→        });
+   629→        emitPhase('output_processing', 'completed', {});
+   630→
+   631→        emitExit(vmResult.exitCode, Date.now() - startTime, {
+   632→          success: vmResult.success,
+   633→          executionMode: 'ir_vm',
+   634→          diagnostics: allDiagnostics.slice(0, 50),
+   635→          phases: Object.fromEntries(
+   636→            Object.entries(pipelineResult.phases).map(([k, v]: [string, any]) => [k, v.status])
+   637→          ),
+   638→          metrics: pipelineResult.metrics,
+   639→          vmSteps: vmResult.stepsExecuted,
+   640→        });
+   641→
+   642→        activeExecutions.delete(requestId);
+   643→        cleanupDir(tempDir);
+   644→        return;
+   645→      }
+   646→
+   647→      if (executionMode === 'codegen' && codegenResult?.success && codegenResult.code) {
+   648→        console.log(`[Server/WS] Using codegen mode for ${requestId}, generated ${codegenResult.stats.linesGenerated} lines`);
+   649→
+   650→        const generatedFilePath = join(tempDir, langConfig.fileName);
+   651→        let generatedCode = codegenResult.code;
+   652→        if (langConfig.prependCode) {
+   653→          generatedCode = langConfig.prependCode + generatedCode;
+   654→        }
+   655→        await writeFile(generatedFilePath, generatedCode, 'utf-8');
+   656→
+   657→        emitPhase('compilation', 'pending', {
+   658→          mode: 'codegen',
+   659→          generatedLines: codegenResult.stats.linesGenerated,
+   660→          generatedFunctions: codegenResult.stats.functionsGenerated,
+   661→        });
+   662→      } else {
+   663→        if (executionMode === 'codegen') {
+   664→          console.log(`[Server/WS] Codegen failed for ${requestId}, falling back to native mode`);
+   665→        }
+   666→
+   667→        emitPhase('compilation', 'pending', {
+   668→          mode: 'native',
+   669→          reason: executionPlan?.reason || 'Using original source',
+   670→        });
+   671→      }
+   672→
+   673→      execution.executionMode = executionMode;
+   674→
+   675→      // COMPILATION (for C, C++)
+   676→      if (langConfig.compileCmd) {
+   677→        emitPhase('compilation', 'running', {
+   678→          command: langConfig.compileCmd.command + ' ' + langConfig.compileCmd.args.join(' '),
+   679→        });
+   680→
+   681→        const compileResult = await compileStep(langConfig.compileCmd, tempDir, emitPhase);
+   682→        allDiagnostics.push(...compileResult.diagnostics);
+   683→
+   684→        if (!compileResult.success) {
+   685→          emitPhase('compilation', 'failed', {
+   686→            errors: compileResult.diagnostics.filter(d => d.severity === 'error').length,
+   687→            warnings: compileResult.diagnostics.filter(d => d.severity === 'warning').length,
+   688→          });
+   689→
+   690→          emitExit(1, Date.now() - startTime, {
+   691→            success: false,
+   692→            executionMode,
+   693→            diagnostics: allDiagnostics.slice(0, 50),
+   694→          });
+   695→
+   696→          activeExecutions.delete(requestId);
+   697→          cleanupDir(tempDir);
+   698→          return;
+   699→        }
+   700→
+   701→        emitPhase('compilation', 'completed', {
+   702→          warnings: compileResult.diagnostics.filter(d => d.severity === 'warning').length,
+   703→        });
+   704→      } else {
+   705→        emitPhase('compilation', 'skipped', { message: `No compilation required for ${language}` });
+   706→      }
+   707→    } else {
+   708→      emitPhase('compilation', 'skipped', { message: 'Pipeline not available — native execution' });
+   709→    }
+   710→
+   711→    // ══════════════════════════════════════════════════════════
+   712→    //  EXECUTION (PTY-based)
+   713→    // ══════════════════════════════════════════════════════════
+   714→    emitPhase('execution', 'starting', {});
+   715→
+   716→    if (ptyAvailable && pty) {
+   717→      console.log(`[Server/WS] Using PTY for ${requestId} (mode: ${executionMode})`);
+   718→      startWithPty(execution, langConfig!, tempDir, termRows, termCols, startTime, executionMode, requestId, ws, emitPhase, emitOutput, emitExit, allDiagnostics);
+   719→    } else {
+   720→      console.log(`[Server/WS] Using pipes (no PTY) for ${requestId} (mode: ${executionMode})`);
+   721→      startWithPipes(execution, langConfig!, tempDir, startTime, executionMode, requestId, ws, emitPhase, emitOutput, emitExit);
+   722→    }
+   723→
+   724→  } catch (error: any) {
+   725→    console.error(`[Server/WS] Pipeline error for ${requestId}:`, error);
+   726→    emitOutput(`\r\n\x1b[31m[Engine Error] ${error.message}\x1b[0m\r\n`);
+   727→    emitExit(1, Date.now() - startTime);
+   728→    activeExecutions.delete(requestId);
+   729→    cleanupDir(tempDir);
+   730→  }
+   731→}
+   732→
+   733→// ─── Handle Stdin ───────────────────────────────────────────────────────────
+   734→
+   735→function handleStdin(ws: WebSocket, msg: any) {
+   736→  const { requestId, data } = msg;
+   737→  const execution = activeExecutions.get(requestId);
+   738→
+   739→  const dataPreview = data?.length <= 20
+   740→    ? JSON.stringify(data)
+   741→    : JSON.stringify(data?.slice(0, 20)) + `... (${data?.length} chars)`;
+   742→  console.log(`[Server/WS] stdin: requestId=${requestId}, data=${dataPreview}, found=${!!execution}, hasPty=${!!execution?.ptyProcess}`);
+   743→
+   744→  if (!execution) {
+   745→    console.warn(`[Server/WS] stdin DROPPED: no active execution for requestId=${requestId}`);
+   746→    console.log(`[Server/WS] Active executions: [${Array.from(activeExecutions.keys()).join(', ')}]`);
+   747→    return;
+   748→  }
+   749→
+   750→  try {
+   751→    if (execution.ptyProcess) {
+   752→      execution.ptyProcess.write(data);
+   753→      console.log(`[Server/WS] stdin written to PTY for ${requestId}: ${dataPreview}`);
+   754→    } else if (execution.process?.stdin) {
+   755→      execution.process.stdin.write(data);
+   756→      console.log(`[Server/WS] stdin written to process.stdin for ${requestId}: ${dataPreview}`);
+   757→    } else {
+   758→      console.warn(`[Server/WS] stdin DROPPED: no PTY or process.stdin for requestId=${requestId}`);
+   759→    }
+   760→  } catch (err) {
+   761→    console.error(`[Server/WS] Failed to write stdin for ${requestId}:`, err);
+   762→  }
+   763→}
+   764→
+   765→// ─── Handle Resize ──────────────────────────────────────────────────────────
+   766→
+   767→function handleResize(ws: WebSocket, msg: any) {
+   768→  const { requestId, rows, cols } = msg;
+   769→  const execution = activeExecutions.get(requestId);
+   770→  if (!execution) return;
+   771→
+   772→  try {
+   773→    if (execution.ptyProcess) {
+   774→      execution.ptyProcess.resize(cols, rows);
+   775→    }
+   776→  } catch {}
+   777→}
+   778→
+   779→// ─── Handle Kill ────────────────────────────────────────────────────────────
+   780→
+   781→function handleKill(ws: WebSocket, msg: any) {
+   782→  const { requestId } = msg;
+   783→  const execution = activeExecutions.get(requestId);
+   784→  if (!execution) return;
+   785→
+   786→  execution.killed = true;
+   787→  killPtyProcess(execution);
+   788→  activeExecutions.delete(requestId);
+   789→  cleanupDir(execution.tempDir);
+   790→
+   791→  sendMsg(ws, {
+   792→    type: 'exit',
+   793→    requestId,
+   794→    exitCode: -1,
+   795→    executionTime: Date.now() - execution.startTime,
+   796→    killed: true,
+   797→  });
+   798→}
+   799→
+   800→// ═══════════════════════════════════════════════════════════════════════════
+   801→//  STARTUP — Prepare Next.js, then launch HTTP + WebSocket servers
+   802→// ═══════════════════════════════════════════════════════════════════════════
+   803→
+   804→async function startServer() {
+   805→  try {
+   806→    // Prepare the Next.js app
+   807→    await app.prepare();
+   808→    console.log('[Server] Next.js app prepared');
+   809→
+   810→    // ─── Create WebSocket server on port 3002 ──────────
+   811→    const WS_PORT = 3002;
+   812→    const wsHttpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+   813→      if (req.url === '/health') {
+   814→        res.writeHead(200, { 'Content-Type': 'application/json' });
+   815→        res.end(JSON.stringify({
+   816→          status: 'ok',
+   817→          ptyAvailable,
+   818→          activeExecutions: activeExecutions.size,
+   819→          engine: 'CodeForge v5.2 — Embedded WebSocket Terminal',
+   820→        }));
+   821→        return;
+   822→      }
+   823→      res.writeHead(404);
+   824→      res.end('Not found. Use WebSocket to connect.');
+   825→    });
+   826→
+   827→    const wss = new WebSocketServer({ server: wsHttpServer });
+   828→
+   829→    // ─── WebSocket Connection Handler ────────────────────────────
+   830→    // The main wss server on port 3002 handles all terminal connections.
+   831→    // Caddy gateway routes ?XTransformPort=3002 directly to port 3002.
+   832→    // We no longer use noServer mode on port 3000 because Bun's req
+   833→    // object is not compatible with ws's handleUpgrade (fails instanceof check).
+   834→    const handleWSConnection = (ws: WebSocket, req: IncomingMessage) => {
+   835→      const clientIp = req.socket.remoteAddress;
+   836→      console.log(`[Server/WS] Client connected from: ${clientIp}`);
+   837→
+   838→      // ── Handle messages ──────────────────────────────────────────────
+   839→      ws.on('message', (raw: Buffer) => {
+   840→        let msg: any;
+   841→        try {
+   842→          msg = JSON.parse(raw.toString());
+   843→        } catch {
+   844→          console.warn('[Server/WS] Invalid JSON message received');
+   845→          return;
+   846→        }
+   847→
+   848→        switch (msg.type) {
+   849→          case 'execute':
+   850→            handleExecute(ws, msg);
+   851→            break;
+   852→          case 'stdin':
+   853→            handleStdin(ws, msg);
+   854→            break;
+   855→          case 'resize':
+   856→            handleResize(ws, msg);
+   857→            break;
+   858→          case 'kill':
+   859→            handleKill(ws, msg);
+   860→            break;
+   861→          case 'ping':
+   862→            // Heartbeat — respond with pong to keep connection alive
+   863→            sendMsg(ws, { type: 'pong' });
+   864→            break;
+   865→          default:
+   866→            console.warn(`[Server/WS] Unknown message type: ${msg.type}`);
+   867→        }
+   868→      });
+   869→
+   870→      // ── Handle disconnect ────────────────────────────────────────────
+   871→      ws.on('close', () => {
+   872→        console.log(`[Server/WS] Client disconnected: ${clientIp}`);
+   873→
+   874→        // Kill any running executions for this WebSocket
+   875→        for (const [requestId, execution] of activeExecutions.entries()) {
+   876→          if (execution.ws === ws && !execution.killed) {
+   877→            console.log(`[Server/WS] Killing execution ${requestId} for disconnected client`);
+   878→            execution.killed = true;
+   879→            killPtyProcess(execution);
+   880→            cleanupDir(execution.tempDir);
+   881→            activeExecutions.delete(requestId);
+   882→          }
+   883→        }
+   884→      });
+   885→
+   886→      ws.on('error', (err) => {
+   887→        console.error(`[Server/WS] WebSocket error:`, err.message);
+   888→      });
+   889→    };
+   890→
+   891→    // Register the connection handler on the main WebSocket server
+   892→    wss.on('connection', handleWSConnection);
+   893→
+   894→    // Start the dedicated WebSocket HTTP server on port 3002
+   895→    wsHttpServer.listen(WS_PORT, hostname, () => {
+   896→      console.log(`[Server/WS] ══════════════════════════════════════════════`);
+   897→      console.log(`[Server/WS] CodeForge Terminal Service v5.2 (Embedded)`);
+   898→      console.log(`[Server/WS] WebSocket server listening on port ${WS_PORT}`);
+   899→      console.log(`[Server/WS] PTY available: ${ptyAvailable}`);
+   900→      console.log(`[Server/WS] ══════════════════════════════════════════════`);
+   901→    });
+   902→
+   903→    // ─── Create the Next.js HTTP server on port 3000 ──────────────────────
+   904→    // This server also handles WebSocket upgrades for the terminal service.
+   905→    // When the browser connects to ws://localhost:3000/?XTransformPort=3002,
+   906→    // the upgrade handler intercepts it and connects to the WebSocket terminal.
+   907→    const nextjsServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+   908→      const parsedUrl = parse(req.url!, true);
+   909→      handle(req, res, parsedUrl);
+   910→    });
+   911→
+   912→    nextjsServer.on('error', (err: Error) => {
+   913→      console.error('[Server] Next.js HTTP server error:', err.message);
+   914→    });
+   915→
+   916→    // ─── WebSocket upgrades on port 3000 ─────────────────────────
+   917→    // Handle terminal WebSocket upgrades on port 3000 so they go
+   918→    // through the Caddy gateway (which only routes to port 3000).
+   919→    //
+   920→    // The client connects to ws://host:81/ws/terminal and Caddy
+   921→    // routes it to port 3000, where we intercept the upgrade.
+   922→    //
+   923→    // Next.js HMR upgrades use /_next/webpack-hmr path and are
+   924→    // handled by Next.js's own upgrade handler.
+   925→    const wssPort3000 = new WebSocketServer({ noServer: true });
+   926→
+   927→    nextjsServer.on('upgrade', (req: IncomingMessage, socket: any, head: Buffer) => {
+   928→      const parsedUrl = parse(req.url!, true);
+   929→
+   930→      // Terminal WebSocket: /ws/terminal or /?XTransformPort=3002
+   931→      if (parsedUrl.pathname === '/ws/terminal' || parsedUrl.query.XTransformPort === '3002') {
+   932→        console.log(`[Server/WS] Terminal WebSocket upgrade from ${req.socket.remoteAddress}`);
+   933→        wssPort3000.handleUpgrade(req, socket, head, (ws) => {
+   934→          wssPort3000.emit('connection', ws, req);
+   935→        });
+   936→      }
+   937→      // All other upgrades (Next.js HMR, etc.) are handled by Next.js
+   938→    });
+   939→
+   940→    wssPort3000.on('connection', handleWSConnection);
+   941→
+   942→    nextjsServer.listen(port, hostname, () => {
+   943→      console.log(`[Server] Next.js ready on http://${hostname}:${port}`);
+   944→    });
+   945→
+   946→    // ─── Graceful Shutdown ─────────────────────────────────────────────
+   947→    const shutdown = async (signal: string) => {
+   948→      console.log(`\n[Server] Received ${signal}, shutting down gracefully...`);
+   949→
+   950→      // Kill all active executions
+   951→      for (const [requestId, execution] of activeExecutions.entries()) {
+   952→        console.log(`[Server/WS] Killing execution ${requestId} during shutdown`);
+   953→        execution.killed = true;
+   954→        killPtyProcess(execution);
+   955→        cleanupDir(execution.tempDir);
+   956→      }
+   957→      activeExecutions.clear();
+   958→
+   959→      // Close WebSocket server
+   960→      wss.close(() => {
+   961→        console.log('[Server/WS] WebSocket server closed');
+   962→      });
+   963→
+   964→      // Close HTTP servers
+   965→      nextjsServer.close(() => {
+   966→        console.log('[Server] Next.js HTTP server closed');
+   967→      });
+   968→      wsHttpServer.close(() => {
+   969→        console.log('[Server/WS] WebSocket HTTP server closed');
+   970→      });
+   971→
+   972→      // Force exit after 5 seconds if graceful shutdown hangs
+   973→      setTimeout(() => {
+   974→        console.log('[Server] Forced shutdown after timeout');
+   975→        process.exit(0);
+   976→      }, 5000);
+   977→    };
+   978→
+   979→    process.on('SIGTERM', () => shutdown('SIGTERM'));
+   980→    process.on('SIGINT', () => shutdown('SIGINT'));
+   981→
+   982→    console.log('[Server] ══════════════════════════════════════════════');
+   983→    console.log('[Server] CodeForge Custom Server v5.2');
+   984→    console.log('[Server] Next.js on port 3000 | Terminal WS on port 3002');
+   985→    console.log('[Server] ══════════════════════════════════════════════');
+   986→
+   987→  } catch (err) {
+   988→    console.error('[Server] Failed to start:', err);
+   989→    process.exit(1);
+   990→  }
+   991→}
+   992→
+   993→// ─── Process Error Handlers ────────────────────────────────────────────────
+   994→
+   995→process.on('uncaughtException', (err) => {
+   996→  console.error('[Server] UNCAUGHT EXCEPTION:', err);
+   997→});
+   998→
+   999→process.on('unhandledRejection', (reason, promise) => {
+  1000→  console.error('[Server] UNHANDLED REJECTION:', reason);
+  1001→});
+  1002→
+  1003→// ─── Start ──────────────────────────────────────────────────────────────────
+  1004→
+  1005→startServer();
+  1006→

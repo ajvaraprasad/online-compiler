@@ -11,7 +11,7 @@ import { Terminal } from './Terminal';
 import { ProblemsPanel } from './ProblemsPanel';
 import { StatusBar } from './StatusBar';
 import { AuthModal } from './AuthModal';
-import { filesAPI, LANGUAGE_EXTENSIONS } from '@/lib/api';
+import { filesAPI, LANGUAGE_EXTENSIONS, DEFAULT_CODE } from '@/lib/api';
 import { useSocket } from '@/hooks/useSocket';
 import { connectWS, disconnectWS } from '@/lib/executor-client';
 
@@ -25,6 +25,8 @@ export function IDELayout() {
     markTabClean,
     remoteFiles,
     setRemoteFiles,
+    tabs,
+    addTab,
   } = useIDEStore();
 
   const { isConnected } = useSocket();
@@ -36,6 +38,13 @@ export function IDELayout() {
       disconnectWS();
     };
   }, []);
+
+  // Auto-create a default Python tab on first load so workspace isn't blank
+  useEffect(() => {
+    if (tabs.length === 0) {
+      addTab('main.py', 'python', DEFAULT_CODE.python);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = useCallback(async () => {
     const state = useIDEStore.getState();
