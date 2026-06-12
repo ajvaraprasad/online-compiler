@@ -1,0 +1,8 @@
+{
+  "name": "executor-engine",
+  "version": "2.0.0",
+  "description": "Compiler Execution Engine - FastAPI PTY-based pipeline",
+  "scripts": {
+    "dev": "cd /home/z/my-project/mini-services/executor-service && python3 -m uvicorn main:app --host 0.0.0.0 --port 3030 --reload --log-level info"
+  }
+}
