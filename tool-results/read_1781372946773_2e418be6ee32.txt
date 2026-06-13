@@ -1,0 +1,797 @@
+     1→// ─── Frontend Validation Service ──────────────────────────────────────────────
+     2→// Manages real-time code validation using both client-side quick checks AND
+     3→// the backend validation API. Client-side checks provide INSTANT feedback (0ms)
+     4→// while backend validation is in-flight (200-500ms).
+     5→// ──────────────────────────────────────────────────────────────────────────────
+     6→
+     7→import type { Diagnostic } from '@/store/useIDEStore';
+     8→
+     9→// ─── Re-export Diagnostic type ────────────────────────────────────────────────
+    10→export type { Diagnostic };
+    11→
+    12→// ─── Internal DiagnosticError (from CodeEditor.tsx) ──────────────────────────
+    13→
+    14→interface DiagnosticError {
+    15→  line: number;
+    16→  col: number;
+    17→  endCol: number;
+    18→  message: string;
+    19→  severity: 'error' | 'warning';
+    20→}
+    21→
+    22→// ─── Bracket Matching Utilities ───────────────────────────────────────────────
+    23→
+    24→interface BracketInfo {
+    25→  char: '(' | '[' | '{' | ')' | ']' | '}';
+    26→  line: number;
+    27→  col: number; // 0-based column index
+    28→}
+    29→
+    30→// Scan code and return all brackets outside strings/comments, with their positions.
+    31→// This is a multi-line scanner that properly handles:
+    32→// - String literals (single, double, triple for Python, template literals for JS)
+    33→// - Comments (line comments, block comments)
+    34→// - Escape sequences
+    35→function scanBrackets(
+    36→  code: string,
+    37→  language: string
+    38→): BracketInfo[] {
+    39→  const brackets: BracketInfo[] = [];
+    40→  const lines = code.split('\n');
+    41→
+    42→  for (let i = 0; i < lines.length; i++) {
+    43→    const line = lines[i];
+    44→    const lineNum = i + 1;
+    45→    let j = 0;
+    46→    let inString: string | null = null;
+    47→    let inChar = false;
+    48→    let escaped = false;
+    49→    let inLineComment = false;
+    50→    let inBlockComment = false;
+    51→    let tripleQuoteCount = 0; // for Python triple-quoted strings
+    52→
+    53→    for (j = 0; j < line.length; j++) {
+    54→      const ch = line[j];
+    55→      const nextCh = j + 1 < line.length ? line[j + 1] : '';
+    56→      const prevCh = j > 0 ? line[j - 1] : '';
+    57→
+    58→      // Skip if inside a line comment
+    59→      if (inLineComment) continue;
+    60→
+    61→      // Handle block comments
+    62→      if (inBlockComment) {
+    63→        if (ch === '*' && nextCh === '/') {
+    64→          inBlockComment = false;
+    65→          j++; // skip the '/'
+    66→        }
+    67→        continue;
+    68→      }
+    69→
+    70→      // Handle escape sequences
+    71→      if (escaped) {
+    72→        escaped = false;
+    73→        continue;
+    74→      }
+    75→      if (ch === '\\' && (inString || inChar)) {
+    76→        escaped = true;
+    77→        continue;
+    78→      }
+    79→
+    80→      // Python triple-quote strings
+    81→      if (language === 'python' && !inString && !inChar) {
+    82→        if ((ch === '"' && nextCh === '"' && line[j + 2] === '"') ||
+    83→            (ch === "'" && nextCh === "'" && line[j + 2] === "'")) {
+    84→          const quote = ch;
+    85→          // Check if we're starting or ending a triple-quoted string
+    86→          if (tripleQuoteCount === 0) {
+    87→            tripleQuoteCount = 3;
+    88→            inString = quote;
+    89→            j += 2; // skip the next two quotes
+    90→            continue;
+    91→          } else if (inString === quote) {
+    92→            tripleQuoteCount = 0;
+    93→            inString = null;
+    94→            j += 2;
+    95→            continue;
+    96→          }
+    97→        }
+    98→      }
+    99→
+   100→      // Handle string boundaries
+   101→      if (inString) {
+   102→        if (tripleQuoteCount > 0) {
+   103→          // Inside triple-quoted string — only end with matching triple quote
+   104→          // (handled above)
+   105→          continue;
+   106→        }
+   107→        if (ch === inString) {
+   108→          inString = null;
+   109→        }
+   110→        continue;
+   111→      }
+   112→
+   113→      if (inChar) {
+   114→        if (ch === "'") {
+   115→          inChar = false;
+   116→        }
+   117→        continue;
+   118→      }
+   119→
+   120→      // Check for comment starts
+   121→      if (ch === '/' && nextCh === '/') {
+   122→        inLineComment = true;
+   123→        continue;
+   124→      }
+   125→      if (ch === '/' && nextCh === '*') {
+   126→        inBlockComment = true;
+   127→        j++; // skip the '*'
+   128→        continue;
+   129→      }
+   130→
+   131→      // Python comment
+   132→      if (language === 'python' && ch === '#') {
+   133→        inLineComment = true;
+   134→        continue;
+   135→      }
+   136→
+   137→      // JavaScript template literals
+   138→      if (language === 'javascript' && ch === '`') {
+   139→        // Find closing backtick
+   140→        let k = j + 1;
+   141→        while (k < line.length && line[k] !== '`') {
+   142→          if (line[k] === '\\') k++; // skip escaped chars
+   143→          k++;
+   144→        }
+   145→        j = k; // skip past closing backtick (or end of line)
+   146→        continue;
+   147→      }
+   148→
+   149→      // String starts
+   150→      if (ch === '"') { inString = '"'; continue; }
+   151→      if (ch === "'" && language !== 'c' && language !== 'cpp' && language !== 'java') {
+   152→        inString = "'"; continue;
+   153→      }
+   154→      if ((language === 'c' || language === 'cpp' || language === 'java') && ch === "'") {
+   155→        inChar = true;
+   156→        continue;
+   157→      }
+   158→
+   159→      // Record brackets
+   160→      if (ch === '(' || ch === ')' || ch === '[' || ch === ']' || ch === '{' || ch === '}') {
+   161→        brackets.push({ char: ch as BracketInfo['char'], line: lineNum, col: j });
+   162→      }
+   163→    }
+   164→  }
+   165→
+   166→  return brackets;
+   167→}
+   168→
+   169→/**
+   170→ * Match brackets using a stack approach. Returns an array of unmatched bracket positions.
+   171→ */
+   172→function findUnmatchedBrackets(
+   173→  code: string,
+   174→  language: string
+   175→): DiagnosticError[] {
+   176→  const errors: DiagnosticError[] = [];
+   177→  const brackets = scanBrackets(code, language);
+   178→
+   179→  const openToClose: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
+   180→  const closeToOpen: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+   181→
+   182→  // Stack stores opening bracket info
+   183→  const stack: Array<{ char: string; line: number; col: number }> = [];
+   184→
+   185→  for (const bracket of brackets) {
+   186→    if (openToClose[bracket.char]) {
+   187→      // Opening bracket — push onto stack
+   188→      stack.push(bracket);
+   189→    } else if (closeToOpen[bracket.char]) {
+   190→      // Closing bracket — check if it matches the top of stack
+   191→      if (stack.length > 0 && stack[stack.length - 1].char === closeToOpen[bracket.char]) {
+   192→        stack.pop(); // matched!
+   193→      } else {
+   194→        // Unmatched closing bracket
+   195→        const charName = bracket.char === ')' ? 'parenthesis' :
+   196→                         bracket.char === ']' ? 'bracket' : 'brace';
+   197→        const expected = stack.length > 0
+   198→          ? `Expected '${openToClose[stack[stack.length - 1].char]}' but found '${bracket.char}'`
+   199→          : `Unmatched closing ${charName} '${bracket.char}'`;
+   200→        errors.push({
+   201→          line: bracket.line,
+   202→          col: bracket.col + 1, // 1-based
+   203→          endCol: bracket.col + 2,
+   204→          message: expected,
+   205→          severity: 'error',
+   206→        });
+   207→      }
+   208→    }
+   209→  }
+   210→
+   211→  // Any remaining opening brackets on the stack are unclosed
+   212→  for (const unclosed of stack) {
+   213→    const charName = unclosed.char === '(' ? 'parenthesis' :
+   214→                     unclosed.char === '[' ? 'bracket' : 'brace';
+   215→    const closingChar = openToClose[unclosed.char];
+   216→    errors.push({
+   217→      line: unclosed.line,
+   218→      col: unclosed.col + 1, // 1-based
+   219→      endCol: unclosed.col + 2,
+   220→      message: `Unclosed ${charName} '${unclosed.char}' — missing '${closingChar}'`,
+   221→      severity: 'error',
+   222→    });
+   223→  }
+   224→
+   225→  return errors;
+   226→}
+   227→
+   228→// ─── Language-Specific Validation Functions ───────────────────────────────────
+   229→
+   230→function validatePython(code: string): DiagnosticError[] {
+   231→  const errors: DiagnosticError[] = [];
+   232→  const lines = code.split('\n');
+   233→
+   234→  // Multi-line bracket matching
+   235→  errors.push(...findUnmatchedBrackets(code, 'python'));
+   236→
+   237→  for (let i = 0; i < lines.length; i++) {
+   238→    const line = lines[i];
+   239→    const lineNum = i + 1;
+   240→
+   241→    // Check for missing colons after statements that require them
+   242→    const colonStatements = ['if ', 'elif ', 'else', 'for ', 'while ', 'def ', 'class ', 'try', 'except', 'finally', 'with '];
+   243→    for (const stmt of colonStatements) {
+   244→      const trimmed = line.trim();
+   245→      if (trimmed.startsWith(stmt) && !trimmed.includes('#') && !trimmed.endsWith(':') && !trimmed.endsWith(':\\')) {
+   246→        // Make sure it's actually a block statement, not a one-liner or inside a string
+   247→        const beforeComment = trimmed.split('#')[0].trimEnd();
+   248→        if (beforeComment.startsWith(stmt) && !beforeComment.endsWith(':')) {
+   249→          // Skip if it's a one-liner (e.g., "if x: y" is valid)
+   250→          if (stmt === 'else' || stmt === 'try' || stmt === 'finally') {
+   251→            errors.push({
+   252→              line: lineNum,
+   253→              col: trimmed.length,
+   254→              endCol: trimmed.length + 1,
+   255→              message: `Expected ':' after '${stmt.trim()}' statement`,
+   256→              severity: 'error',
+   257→            });
+   258→          } else if (!beforeComment.includes(':')) {
+   259→            errors.push({
+   260→              line: lineNum,
+   261→              col: trimmed.length,
+   262→              endCol: trimmed.length + 1,
+   263→              message: `Expected ':' after '${stmt.trim()}' statement`,
+   264→              severity: 'error',
+   265→            });
+   266→          }
+   267→        }
+   268→      }
+   269→    }
+   270→
+   271→    // Check for common Python errors: using = instead of == in conditions
+   272→    const ifWhileMatch = line.match(/^\s*(if|while)\s+(.+):/);
+   273→    if (ifWhileMatch) {
+   274→      const condition = ifWhileMatch[2];
+   275→      // Simple check: single = not inside function calls
+   276→      if (condition.includes('=') && !condition.includes('==') && !condition.includes('!=') && !condition.includes('<=') && !condition.includes('>=') && !condition.includes('= ') && condition.match(/[^=!<>]=[^=]/)) {
+   277→        // Only warn, don't error (could be valid walrus operator :=)
+   278→        const eqIndex = condition.indexOf('=');
+   279→        errors.push({
+   280→          line: lineNum,
+   281→          col: (line.indexOf(condition) + eqIndex) + 1,
+   282→          endCol: (line.indexOf(condition) + eqIndex) + 2,
+   283→          message: 'Possible assignment in condition — did you mean "=="?',
+   284→          severity: 'warning',
+   285→        });
+   286→      }
+   287→    }
+   288→
+   289→    // Check for print used without parentheses (Python 3)
+   290→    const printMatch = line.match(/^\s*print\s+[^(]/);
+   291→    if (printMatch && !line.trim().startsWith('#')) {
+   292→      const printIdx = line.indexOf('print');
+   293→      errors.push({
+   294→        line: lineNum,
+   295→        col: printIdx + 1,
+   296→        endCol: printIdx + 6,
+   297→        message: 'Missing parentheses in call to \'print\'. Did you mean print(...)?',
+   298→        severity: 'error',
+   299→      });
+   300→    }
+   301→  }
+   302→
+   303→  return errors;
+   304→}
+   305→
+   306→function validateC(code: string): DiagnosticError[] {
+   307→  const errors: DiagnosticError[] = [];
+   308→
+   309→  // Multi-line bracket matching
+   310→  errors.push(...findUnmatchedBrackets(code, 'c'));
+   311→
+   312→  const lines = code.split('\n');
+   313→
+   314→  for (let i = 0; i < lines.length; i++) {
+   315→    const line = lines[i];
+   316→    const lineNum = i + 1;
+   317→    const trimmed = line.trim();
+   318→
+   319→    // Skip comments and preprocessor directives
+   320→    if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('/*')) continue;
+   321→
+   322→    // Check for missing semicolons (basic check)
+   323→    if (trimmed.length > 0 &&
+   324→        !trimmed.startsWith('//') &&
+   325→        !trimmed.startsWith('#') &&
+   326→        !trimmed.startsWith('{') &&
+   327→        !trimmed.startsWith('}') &&
+   328→        !trimmed.endsWith('{') &&
+   329→        !trimmed.endsWith('}') &&
+   330→        !trimmed.endsWith(';') &&
+   331→        !trimmed.endsWith(',') &&
+   332→        !trimmed.endsWith(':') &&
+   333→        !trimmed.endsWith('\\') &&
+   334→        !trimmed.startsWith('if') &&
+   335→        !trimmed.startsWith('else') &&
+   336→        !trimmed.startsWith('while') &&
+   337→        !trimmed.startsWith('for') &&
+   338→        !trimmed.startsWith('do') &&
+   339→        !trimmed.startsWith('return') &&
+   340→        !trimmed.endsWith(')') &&
+   341→        trimmed.length > 2) {
+   342→      // Check if it looks like a statement that should end with ;
+   343→      if (trimmed.match(/^(int|float|double|char|long|short|unsigned|void|auto|static|const|struct|enum|typedef)\b/) ||
+   344→          trimmed.match(/\w+\s*=\s*.+/) ||
+   345→          trimmed.match(/\w+\+\+/) ||
+   346→          trimmed.match(/\w+--/) ||
+   347→          trimmed.match(/printf\s*\(/) ||
+   348→          trimmed.match(/scanf\s*\(/) ||
+   349→          trimmed.match(/return\s+/)) {
+   350→        if (!trimmed.match(/\/\//) || trimmed.split('//')[0].trim().length > 0) {
+   351→          const stmtPart = trimmed.includes('//') ? trimmed.split('//')[0].trim() : trimmed;
+   352→          if (stmtPart.length > 0 && !stmtPart.endsWith(';') && !stmtPart.endsWith('{') && !stmtPart.endsWith('}') && !stmtPart.endsWith(',')) {
+   353→            errors.push({
+   354→              line: lineNum,
+   355→              col: line.length,
+   356→              endCol: line.length + 1,
+   357→              message: `Expected ';' at end of statement`,
+   358→              severity: 'error',
+   359→            });
+   360→          }
+   361→        }
+   362→      }
+   363→    }
+   364→  }
+   365→
+   366→  // Check for missing main function
+   367→  if (!code.includes('main')) {
+   368→    errors.push({
+   369→      line: 1,
+   370→      col: 1,
+   371→      endCol: 2,
+   372→      message: 'Warning: No main() function found',
+   373→      severity: 'warning',
+   374→    });
+   375→  }
+   376→
+   377→  return errors;
+   378→}
+   379→
+   380→function validateCpp(code: string): DiagnosticError[] {
+   381→  const errors: DiagnosticError[] = validateC(code);
+   382→  const lines = code.split('\n');
+   383→
+   384→  for (let i = 0; i < lines.length; i++) {
+   385→    const line = lines[i];
+   386→    const lineNum = i + 1;
+   387→    const trimmed = line.trim();
+   388→
+   389→    // Check for cout/cin without proper includes
+   390→    if ((trimmed.includes('cout') || trimmed.includes('cin') || trimmed.includes('endl')) &&
+   391→        !code.includes('#include <iostream>')) {
+   392→      errors.push({
+   393→        line: lineNum,
+   394→        col: 1,
+   395→        endCol: 2,
+   396→        message: 'Missing #include <iostream> for cout/cin/endl',
+   397→        severity: 'warning',
+   398→      });
+   399→      break; // Only report once
+   400→    }
+   401→
+   402→    // Check for using namespace std without include
+   403→    if (trimmed.includes('using namespace std') && !code.includes('#include <iostream>')) {
+   404→      errors.push({
+   405→        line: lineNum,
+   406→        col: 1,
+   407→        endCol: 2,
+   408→        message: 'using namespace std without including headers',
+   409→        severity: 'warning',
+   410→      });
+   411→    }
+   412→
+   413→    // Check for vector without include
+   414→    if (trimmed.includes('vector') && !code.includes('#include <vector>') && !code.includes('#include <bits/stdc++.h>')) {
+   415→      errors.push({
+   416→        line: lineNum,
+   417→        col: 1,
+   418→        endCol: 2,
+   419→        message: 'Missing #include <vector>',
+   420→        severity: 'warning',
+   421→      });
+   422→      break;
+   423→    }
+   424→
+   425→    // Check for string without include
+   426→    if (trimmed.includes('std::string') && !code.includes('#include <string>') && !code.includes('#include <bits/stdc++.h>')) {
+   427→      errors.push({
+   428→        line: lineNum,
+   429→        col: 1,
+   430→        endCol: 2,
+   431→        message: 'Missing #include <string>',
+   432→        severity: 'warning',
+   433→      });
+   434→      break;
+   435→    }
+   436→  }
+   437→
+   438→  return errors;
+   439→}
+   440→
+   441→function validateJava(code: string): DiagnosticError[] {
+   442→  const errors: DiagnosticError[] = [];
+   443→
+   444→  // Multi-line bracket matching
+   445→  errors.push(...findUnmatchedBrackets(code, 'java'));
+   446→
+   447→  const lines = code.split('\n');
+   448→
+   449→  for (let i = 0; i < lines.length; i++) {
+   450→    const line = lines[i];
+   451→    const lineNum = i + 1;
+   452→    const trimmed = line.trim();
+   453→
+   454→    if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) continue;
+   455→
+   456→    // Check for missing semicolons
+   457→    if (trimmed.length > 0 &&
+   458→        !trimmed.startsWith('//') &&
+   459→        !trimmed.startsWith('{') &&
+   460→        !trimmed.startsWith('}') &&
+   461→        !trimmed.endsWith('{') &&
+   462→        !trimmed.endsWith('}') &&
+   463→        !trimmed.endsWith(';') &&
+   464→        !trimmed.endsWith(',') &&
+   465→        !trimmed.endsWith(':') &&
+   466→        !trimmed.endsWith('\\') &&
+   467→        !trimmed.endsWith(')') &&
+   468→        !trimmed.startsWith('if') &&
+   469→        !trimmed.startsWith('else') &&
+   470→        !trimmed.startsWith('while') &&
+   471→        !trimmed.startsWith('for') &&
+   472→        !trimmed.startsWith('class') &&
+   473→        !trimmed.startsWith('interface') &&
+   474→        !trimmed.startsWith('enum') &&
+   475→        !trimmed.startsWith('@') &&
+   476→        trimmed.length > 2) {
+   477→
+   478→      if (trimmed.match(/^(int|float|double|char|long|short|boolean|byte|String|void|static|final|public|private|protected|abstract)\b/) ||
+   479→          trimmed.match(/\w+\s*=\s*.+/) ||
+   480→          trimmed.match(/return\s+/) ||
+   481→          trimmed.match(/System\.(out|in)\./)) {
+   482→        const stmtPart = trimmed.includes('//') ? trimmed.split('//')[0].trim() : trimmed;
+   483→        if (stmtPart.length > 0 && !stmtPart.endsWith(';') && !stmtPart.endsWith('{') && !stmtPart.endsWith('}') && !stmtPart.endsWith(',')) {
+   484→          errors.push({
+   485→            line: lineNum,
+   486→            col: line.length,
+   487→            endCol: line.length + 1,
+   488→            message: `Expected ';' at end of statement`,
+   489→            severity: 'error',
+   490→          });
+   491→        }
+   492→      }
+   493→    }
+   494→  }
+   495→
+   496→  // Check for class declaration
+   497→  if (!code.includes('class ')) {
+   498→    errors.push({
+   499→      line: 1,
+   500→      col: 1,
+   501→      endCol: 2,
+   502→      message: 'Java requires at least one class declaration',
+   503→      severity: 'error',
+   504→    });
+   505→  }
+   506→
+   507→  // Check for missing main method
+   508→  if (!code.includes('public static void main') && !code.includes('static void main')) {
+   509→    errors.push({
+   510→      line: 1,
+   511→      col: 1,
+   512→      endCol: 2,
+   513→      message: 'Warning: No main() method found',
+   514→      severity: 'warning',
+   515→    });
+   516→  }
+   517→
+   518→  return errors;
+   519→}
+   520→
+   521→function validateJavaScript(code: string): DiagnosticError[] {
+   522→  const errors: DiagnosticError[] = [];
+   523→
+   524→  // Multi-line bracket matching
+   525→  errors.push(...findUnmatchedBrackets(code, 'javascript'));
+   526→
+   527→  // Note: Monaco's built-in TypeScript/JS validation will handle most JS errors
+   528→  // Our custom validation just adds extra checks for unmatched brackets etc.
+   529→  return errors;
+   530→}
+   531→
+   532→// ─── Internal validateCode dispatcher ─────────────────────────────────────────
+   533→
+   534→function validateCode(code: string, language: string): DiagnosticError[] {
+   535→  switch (language) {
+   536→    case 'python': return validatePython(code);
+   537→    case 'c': return validateC(code);
+   538→    case 'cpp': return validateCpp(code);
+   539→    case 'java': return validateJava(code);
+   540→    case 'javascript': return validateJavaScript(code);
+   541→    default: return [];
+   542→  }
+   543→}
+   544→
+   545→// ─── DiagnosticError → Diagnostic mapping ────────────────────────────────────
+   546→
+   547→let diagnosticCounter = 0;
+   548→
+   549→function mapDiagnosticError(
+   550→  err: DiagnosticError,
+   551→  language: string,
+   552→  prefix: string = 'client'
+   553→): Diagnostic {
+   554→  return {
+   555→    id: `${prefix}_${language}_${Date.now()}_${++diagnosticCounter}`,
+   556→    message: err.message,
+   557→    line: err.line,
+   558→    column: err.col,
+   559→    endLine: err.line,
+   560→    endColumn: err.endCol,
+   561→    severity: err.severity,
+   562→    source: language,
+   563→  };
+   564→}
+   565→
+   566→// ─── ValidationProvider Interface ─────────────────────────────────────────────
+   567→
+   568→interface ValidationProvider {
+   569→  validate(code: string): Promise<Diagnostic[]>;
+   570→}
+   571→
+   572→// ─── Backend Validation Provider ──────────────────────────────────────────────
+   573→
+   574→class BackendValidationProvider implements ValidationProvider {
+   575→  private language: string;
+   576→
+   577→  constructor(language: string) {
+   578→    this.language = language;
+   579→  }
+   580→
+   581→  async validate(code: string): Promise<Diagnostic[]> {
+   582→    try {
+   583→      const response = await fetch('/api/validate', {
+   584→        method: 'POST',
+   585→        headers: { 'Content-Type': 'application/json' },
+   586→        body: JSON.stringify({ code, language: this.language }),
+   587→      });
+   588→
+   589→      if (!response.ok) return [];
+   590→
+   591→      const data = await response.json();
+   592→      return (data.diagnostics || []).map((d: Record<string, unknown>, i: number) => ({
+   593→        id: `backend_${this.language}_${Date.now()}_${i}`,
+   594→        message: String(d.message ?? ''),
+   595→        line: Number(d.line ?? 1),
+   596→        column: Number(d.column ?? 1),
+   597→        endLine: Number(d.endLine ?? d.line ?? 1),
+   598→        endColumn: Number(d.endColumn ?? (Number(d.column ?? 1) + 1)),
+   599→        severity: (['error', 'warning', 'info'].includes(String(d.severity))
+   600→          ? String(d.severity)
+   601→          : 'error') as Diagnostic['severity'],
+   602→        source: String(d.source ?? this.language),
+   603→      }));
+   604→    } catch {
+   605→      return []; // Graceful degradation
+   606→    }
+   607→  }
+   608→}
+   609→
+   610→// ─── Cascading Error Suppression ──────────────────────────────────────────────
+   611→
+   612→/**
+   613→ * Detect and suppress cascading errors — errors that are a direct consequence
+   614→ * of a prior error on the same or adjacent line. Modern compilers (like VS Code's
+   615→ * built-in diagnostics) suppress these to avoid noise.
+   616→ *
+   617→ * Heuristic: If two errors are on the same line or within 1 line of each other,
+   618→ * and one is a "root cause" type (unterminated string, unclosed bracket, missing
+   619→ * quote), the second is likely cascading and should be suppressed.
+   620→ *
+   621→ * Cascading patterns (these secondary errors are commonly caused by root errors):
+   622→ *   - "missing ')'" after "unterminated string"
+   623→ *   - "unexpected token" after "unterminated string"
+   624→ *   - "expected ';'" after a syntax error on the same line
+   625→ *   - "Unclosed parenthesis" after "unterminated string literal"
+   626→ */
+   627→const ROOT_CAUSE_PATTERNS = [
+   628→  /unterminated\s+string/i,
+   629→  /unclosed\s+(string|quote)/i,
+   630→  /missing\s+['"]quote/i,
+   631→  /EOL\s+while\s+scanning\s+string/i,
+   632→  /unterminated\s+string\s+literal/i,
+   633→  /missing\s+closing\s+quote/i,
+   634→];
+   635→
+   636→const CASCADING_PATTERNS = [
+   637→  /unclosed\s+(parenthesis|bracket|brace)/i,
+   638→  /missing\s+['")\]}/]/i,
+   639→  /unexpected\s+(token|end|character)/i,
+   640→  /expected\s+['");\]}/]/i,
+   641→  /missing\s+['");\]}/]/i,
+   642→  /unmatched\s+closing/i,
+   643→  /unexpected\s+indent/i,
+   644→  /expected\s+['");\]}\s]/i,
+   645→];
+   646→
+   647→function isRootCauseError(message: string): boolean {
+   648→  return ROOT_CAUSE_PATTERNS.some(p => p.test(message));
+   649→}
+   650→
+   651→function isLikelyCascading(message: string): boolean {
+   652→  return CASCADING_PATTERNS.some(p => p.test(message));
+   653→}
+   654→
+   655→/**
+   656→ * Suppress cascading errors from the diagnostic list.
+   657→ * Returns a filtered list where obvious cascading errors are removed.
+   658→ */
+   659→export function suppressCascadingErrors(diagnostics: Diagnostic[]): Diagnostic[] {
+   660→  if (diagnostics.length <= 1) return diagnostics;
+   661→
+   662→  // Find root cause errors
+   663→  const rootErrors = diagnostics.filter(d =>
+   664→    d.severity === 'error' && isRootCauseError(d.message)
+   665→  );
+   666→
+   667→  if (rootErrors.length === 0) return diagnostics;
+   668→
+   669→  // Build a set of root error lines (with ±1 tolerance for adjacent cascading)
+   670→  const rootLines = new Set<number>();
+   671→  for (const root of rootErrors) {
+   672→    rootLines.add(root.line);
+   673→    rootLines.add(root.line - 1);
+   674→    rootLines.add(root.line + 1);
+   675→  }
+   676→
+   677→  // Filter: keep diagnostics that are NOT likely cascading on a root line
+   678→  return diagnostics.filter(d => {
+   679→    if (d.severity !== 'error') return true; // Keep warnings/info always
+   680→    if (!isLikelyCascading(d.message)) return true; // Keep non-cascading errors
+   681→    if (!rootLines.has(d.line)) return true; // Not near a root error
+   682→    // This is likely a cascading error — mark it
+   683→    return false;
+   684→  });
+   685→}
+   686→
+   687→// ─── Merge Logic ──────────────────────────────────────────────────────────────
+   688→
+   689→/**
+   690→ * Merge client-side and backend diagnostics intelligently.
+   691→ * - Backend diagnostics are the source of truth (more accurate).
+   692→ * - Client diagnostics are kept only if they don't overlap with a backend
+   693→ *   diagnostic at the same line with the same severity.
+   694→ * - Cascading errors are suppressed after merging.
+   695→ */
+   696→export function mergeDiagnostics(
+   697→  clientDiagnostics: Diagnostic[],
+   698→  backendDiagnostics: Diagnostic[]
+   699→): Diagnostic[] {
+   700→  // Build a set of "line:severity" keys from backend diagnostics for dedup
+   701→  const backendLines = new Set(
+   702→    backendDiagnostics.map(d => `${d.line}:${d.severity}`)
+   703→  );
+   704→
+   705→  // Keep client diagnostics that don't overlap with backend at the same line
+   706→  const uniqueClientDiagnostics = clientDiagnostics.filter(
+   707→    d => !backendLines.has(`${d.line}:${d.severity}`)
+   708→  );
+   709→
+   710→  const merged = [...backendDiagnostics, ...uniqueClientDiagnostics];
+   711→
+   712→  // Suppress cascading errors
+   713→  return suppressCascadingErrors(merged);
+   714→}
+   715→
+   716→// ─── Helper: Client-side Quick Diagnostics (instant, no network) ──────────────
+   717→
+   718→export function getClientSideDiagnostics(
+   719→  code: string,
+   720→  language: string
+   721→): Diagnostic[] {
+   722→  const errors = validateCode(code, language);
+   723→  return errors.map(err => mapDiagnosticError(err, language, 'client'));
+   724→}
+   725→
+   726→// ─── Helper: Backend Diagnostics (network call, more accurate) ────────────────
+   727→
+   728→export async function getBackendDiagnostics(
+   729→  code: string,
+   730→  language: string
+   731→): Promise<Diagnostic[]> {
+   732→  const provider = new BackendValidationProvider(language);
+   733→  return provider.validate(code);
+   734→}
+   735→
+   736→// ─── ValidationManager ────────────────────────────────────────────────────────
+   737→
+   738→class ValidationManager {
+   739→  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+   740→  private debounceMs = 400; // 400ms debounce
+   741→  private activeAbortController: AbortController | null = null;
+   742→
+   743→  /**
+   744→   * Schedule validation with debounce.
+   745→   * 1. Immediately provides client-side quick validation results (0ms).
+   746→   * 2. After debounce delay, fetches backend validation and merges both sources.
+   747→   */
+   748→  scheduleValidation(
+   749→    code: string,
+   750→    language: string,
+   751→    callback: (diagnostics: Diagnostic[]) => void
+   752→  ): void {
+   753→    // Clear previous timer
+   754→    if (this.debounceTimer) {
+   755→      clearTimeout(this.debounceTimer);
+   756→    }
+   757→
+   758→    // Abort previous in-flight backend request
+   759→    if (this.activeAbortController) {
+   760→      this.activeAbortController.abort();
+   761→    }
+   762→
+   763→    // Immediately provide client-side quick validation results (0ms)
+   764→    const quickResults = getClientSideDiagnostics(code, language);
+   765→    callback(quickResults);
+   766→
+   767→    // Then schedule backend validation after debounce
+   768→    this.debounceTimer = setTimeout(async () => {
+   769→      try {
+   770→        const backendResults = await getBackendDiagnostics(code, language);
+   771→
+   772→        // Merge: backend results take priority, remove duplicates
+   773→        const merged = mergeDiagnostics(quickResults, backendResults);
+   774→        callback(merged);
+   775→      } catch {
+   776→        // If backend fails, just keep the client-side results (already sent)
+   777→      }
+   778→    }, this.debounceMs);
+   779→  }
+   780→
+   781→  /** Cancel any pending validation */
+   782→  cancel(): void {
+   783→    if (this.debounceTimer) {
+   784→      clearTimeout(this.debounceTimer);
+   785→      this.debounceTimer = null;
+   786→    }
+   787→    if (this.activeAbortController) {
+   788→      this.activeAbortController.abort();
+   789→      this.activeAbortController = null;
+   790→    }
+   791→  }
+   792→}
+   793→
+   794→// ─── Singleton Export ─────────────────────────────────────────────────────────
+   795→
+   796→export const validationManager = new ValidationManager();
+   797→

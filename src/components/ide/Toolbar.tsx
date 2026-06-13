@@ -171,6 +171,9 @@ export function Toolbar() {
       setTerminalOpen(true);
       const store = useIDEStore.getState();
 
+      // Mark execution state as INVALID
+      store.setExecutionState('INVALID');
+
       // Wait for terminal to be ready before writing
       const terminalReadyWithTimeout = Promise.race([
         waitForTerminalReady(),
@@ -231,6 +234,7 @@ export function Toolbar() {
     setTerminalOpen(true);
     setExecuting(true);
     resetPipeline();
+    useIDEStore.getState().setExecutionState('RUNNING');
 
     const requestId = `exec_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     setCurrentRequestId(requestId);
@@ -375,10 +379,12 @@ export function Toolbar() {
 
             if (exitCode === 0) {
               // VS Code style: clean exit status
+              currentState.setExecutionState('SUCCESS');
               currentState.writeToTerminal(
                 ANSI.DIM + `Process exited with code 0 in ${timeStr}s` + ANSI.RESET + '\r\n'
               );
             } else if (exitCode === -1) {
+              currentState.setExecutionState('FAILED');
               currentState.writeToTerminal(
                 ANSI.RED + `Process timed out after ${timeStr}s` + ANSI.RESET + '\r\n'
               );
@@ -388,10 +394,12 @@ export function Toolbar() {
               const failedPhase = phases.find(p => p.status === 'failed');
               if (failedPhase) {
                 const display = PHASE_DISPLAY[failedPhase.phase] || { name: failedPhase.phase };
+                currentState.setExecutionState('FAILED');
                 currentState.writeToTerminal(
                   ANSI.RED + `Execution blocked: ${display.name} failed` + ANSI.RESET + '\r\n'
                 );
               } else {
+                currentState.setExecutionState('FAILED');
                 currentState.writeToTerminal(
                   ANSI.RED + `Process exited with code ${exitCode} in ${timeStr}s` + ANSI.RESET + '\r\n'
                 );
@@ -430,6 +438,7 @@ export function Toolbar() {
     setExecuting(false);
     setCurrentRequestId(null);
     currentRequestIdRef.current = null;
+    useIDEStore.getState().setExecutionState('IDLE');
     writeToTerminal(ANSI.YELLOW + 'Execution stopped by user' + ANSI.RESET + '\r\n');
   }, [setExecuting, setCurrentRequestId, writeToTerminal]);
 

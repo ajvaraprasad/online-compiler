@@ -1,0 +1,747 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import React, { useRef, useEffect, useState, useCallback } from 'react';
+     4→     4→import { Terminal as XTerm, type ILinkProvider, type ILink, type IBufferRange } from '@xterm/xterm';
+     5→     5→import { FitAddon } from '@xterm/addon-fit';
+     6→     6→import { useIDEStore } from '@/store/useIDEStore';
+     7→     7→import { sendStdin, killExecution, resizeTerminal } from '@/lib/executor-client';
+     8→     8→import { parseTerminalError, isPotentialErrorLine } from '@/lib/terminal-error-parser';
+     9→     9→import { getEditorInstance } from '@/components/ide/ProblemsPanel';
+    10→    10→import {
+    11→    11→  Terminal as TerminalIcon,
+    12→    12→  X,
+    13→    13→  ChevronUp,
+    14→    14→  ChevronDown,
+    15→    15→  Trash2,
+    16→    16→} from 'lucide-react';
+    17→    17→import { Button } from '@/components/ui/button';
+    18→    18→
+    19→    19→import '@xterm/xterm/css/xterm.css';
+    20→    20→
+    21→    21→// ─── Terminal Ready Promise ────────────────────────────────────────────────
+    22→    22→// External code (Toolbar/handleRun) can await this to ensure the terminal
+    23→    23→// panel is visible and the xterm renderer has completed a fit+refresh cycle
+    24→    24→// before writing data.  This eliminates the race condition where output is
+    25→    25→// written while the container still has zero dimensions.
+    26→    26→
+    27→    27→let terminalReadyResolve: (() => void) | null = null;
+    28→    28→let terminalReadyPromise: Promise<void> = Promise.resolve();
+    29→    29→
+    30→    30→export function waitForTerminalReady(): Promise<void> {
+    31→    31→  return terminalReadyPromise;
+    32→    32→}
+    33→    33→
+    34→    34→function resetTerminalReady(): void {
+    35→    35→  terminalReadyPromise = new Promise<void>((resolve) => {
+    36→    36→    terminalReadyResolve = resolve;
+    37→    37→  });
+    38→    38→}
+    39→    39→
+    40→    40→function signalTerminalReady(): void {
+    41→    41→  if (terminalReadyResolve) {
+    42→    42→    terminalReadyResolve();
+    43→    43→    terminalReadyResolve = null;
+    44→    44→  }
+    45→    45→}
+    46→    46→
+    47→    47→// ─── Strip ANSI escape sequences from a string ──────────────────────────────
+    48→    48→// Terminal output often contains color/formatting codes that should not be
+    49→    49→// considered when parsing for error patterns.
+    50→    50→
+    51→    51→function stripAnsi(str: string): string {
+    52→    52→  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+    53→    53→}
+    54→    54→
+    55→    55→// ─── Error Link Tooltip ─────────────────────────────────────────────────────
+    56→    56→// A simple DOM-based tooltip that appears when hovering over a detected
+    57→    57→// error link in the terminal. Follows xterm's guidance to create the element
+    58→    58→// within Terminal.element and add the `xterm-hover` class.
+    59→    59→
+    60→    60→let hoverTooltip: HTMLDivElement | null = null;
+    61→    61→
+    62→    62→function getOrCreateTooltip(terminalElement: HTMLElement): HTMLDivElement {
+    63→    63→  if (hoverTooltip && hoverTooltip.parentElement === terminalElement) {
+    64→    64→    return hoverTooltip;
+    65→    65→  }
+    66→    66→  // Clean up any stale tooltip
+    67→    67→  if (hoverTooltip && hoverTooltip.parentElement) {
+    68→    68→    hoverTooltip.parentElement.removeChild(hoverTooltip);
+    69→    69→  }
+    70→    70→  const tooltip = document.createElement('div');
+    71→    71→  tooltip.className = 'xterm-hover';
+    72→    72→  tooltip.style.cssText = `
+    73→    73→    position: absolute;
+    74→    74→    background: #1e1e2e;
+    75→    75→    color: #89b4fa;
+    76→    76→    font-size: 11px;
+    77→    77→    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    78→    78→    padding: 4px 8px;
+    79→    79→    border-radius: 4px;
+    80→    80→    border: 1px solid #45475a;
+    81→    81→    pointer-events: none;
+    82→    82→    z-index: 1000;
+    83→    83→    white-space: nowrap;
+    84→    84→    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    85→    85→  `;
+    86→    86→  terminalElement.appendChild(tooltip);
+    87→    87→  hoverTooltip = tooltip;
+    88→    88→  return tooltip;
+    89→    89→}
+    90→    90→
+    91→    91→function hideTooltip() {
+    92→    92→  if (hoverTooltip) {
+    93→    93→    hoverTooltip.style.display = 'none';
+    94→    94→  }
+    95→    95→}
+    96→    96→
+    97→    97→// ─── Navigate to error line in Monaco editor ─────────────────────────────────
+    98→    98→
+    99→    99→function navigateEditorToLine(lineNumber: number, column?: number) {
+   100→   100→  const editor = getEditorInstance();
+   101→   101→  if (!editor) {
+   102→   102→    console.warn('[Terminal] Cannot navigate: no Monaco editor instance');
+   103→   103→    return;
+   104→   104→  }
+   105→   105→
+   106→   106→  try {
+   107→   107→    // Reveal the line in the center of the viewport
+   108→   108→    editor.revealLineInCenter(lineNumber);
+   109→   109→
+   110→   110→    // Set cursor position
+   111→   111→    editor.setPosition({
+   112→   112→      lineNumber,
+   113→   113→      column: column || 1,
+   114→   114→    });
+   115→   115→
+   116→   116→    // Try to select the error range if we have the column
+   117→   117→    const monaco = (window as any).monaco;
+   118→   118→    if (monaco && column && column > 1) {
+   119→   119→      // Try to find a marker at this position and select its range
+   120→   120→      const model = editor.getModel();
+   121→   121→      if (model) {
+   122→   122→        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+   123→   123→        const matchingMarker = markers.find((m: any) =>
+   124→   124→          m.startLineNumber === lineNumber &&
+   125→   125→          Math.abs(m.startColumn - column) <= 2
+   126→   126→        );
+   127→   127→        if (matchingMarker) {
+   128→   128→          editor.setSelection(new monaco.Range(
+   129→   129→            matchingMarker.startLineNumber, matchingMarker.startColumn,
+   130→   130→            matchingMarker.endLineNumber, matchingMarker.endColumn
+   131→   131→          ));
+   132→   132→        }
+   133→   133→      }
+   134→   134→    }
+   135→   135→
+   136→   136→    // Focus the editor
+   137→   137→    editor.focus();
+   138→   138→
+   139→   139→    // Temporarily highlight the line with a decoration that fades after 3s
+   140→   140→    if (monaco) {
+   141→   141→      const decorations = editor.deltaDecorations([], [{
+   142→   142→        range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+   143→   143→        options: {
+   144→   144→          isWholeLine: true,
+   145→   145→          className: 'error-line-highlight',
+   146→   146→          glyphMarginClassName: 'error-line-glyph',
+   147→   147→        },
+   148→   148→      }]);
+   149→   149→
+   150→   150→      // Remove highlight after 3 seconds
+   151→   151→      setTimeout(() => {
+   152→   152→        try {
+   153→   153→          editor.deltaDecorations(decorations, []);
+   154→   154→        } catch {}
+   155→   155→      }, 3000);
+   156→   156→    }
+   157→   157→
+   158→   158→    console.log(`[Terminal] Navigated to line ${lineNumber}${column ? `:${column}` : ''}`);
+   159→   159→  } catch (err) {
+   160→   160→    console.warn('[Terminal] Navigation failed:', err);
+   161→   161→  }
+   162→   162→}
+   163→   163→
+   164→   164→// ─── Register error link provider on xterm instance ──────────────────────────
+   165→   165→// Uses xterm.js v6 registerLinkProvider API to make detected error patterns
+   166→   166→// clickable. When a line contains a recognizable error format (Python, C/C++,
+   167→   167→// Java, Node.js), the matching region becomes a link with underline styling
+   168→   168→// and a pointer cursor. Clicking navigates the Monaco editor to the error line.
+   169→   169→
+   170→   170→function registerErrorLinkProvider(xterm: XTerm) {
+   171→   171→  const linkProvider: ILinkProvider = {
+   172→   172→    provideLinks(bufferLineNumber: number, callback: (links: ILink[] | undefined) => void): void {
+   173→   173→      try {
+   174→   174→        // Get the buffer line at the given row
+   175→   175→        const bufferLine = xterm.buffer.active.getLine(bufferLineNumber);
+   176→   176→        if (!bufferLine) {
+   177→   177→          callback(undefined);
+   178→   178→          return;
+   179→   179→        }
+   180→   180→
+   181→   181→        // Translate the buffer line to a plain string (visible text only)
+   182→   182→        const lineText = bufferLine.translateToString(true);
+   183→   183→        if (!lineText || lineText.trim().length === 0) {
+   184→   184→          callback(undefined);
+   185→   185→          return;
+   186→   186→        }
+   187→   187→
+   188→   188→        // Quick pre-filter: skip lines that don't look like errors
+   189→   189→        if (!isPotentialErrorLine(lineText)) {
+   190→   190→          callback(undefined);
+   191→   191→          return;
+   192→   192→        }
+   193→   193→
+   194→   194→        // Strip ANSI codes for parsing (the visible text from translateToString
+   195→   195→        // should already be clean, but be defensive)
+   196→   196→        const cleanText = stripAnsi(lineText);
+   197→   197→
+   198→   198→        // Parse for error patterns
+   199→   199→        const parsed = parseTerminalError(cleanText);
+   200→   200→        if (!parsed) {
+   201→   201→          callback(undefined);
+   202→   202→          return;
+   203→   203→        }
+   204→   204→
+   205→   205→        // Calculate the range for the clickable region.
+   206→   206→        // xterm positions are 1-based. matchStart/matchEnd are 0-based string indices.
+   207→   207→        const startX = parsed.matchStart + 1;  // Convert 0-based → 1-based
+   208→   208→        const endX = Math.min(parsed.matchEnd + 1, lineText.length); // Inclusive end → +1, clamp
+   209→   209→        const y = bufferLineNumber;
+   210→   210→
+   211→   211→        const range: IBufferRange = {
+   212→   212→          start: { x: startX, y },
+   213→   213→          end: { x: endX, y },
+   214→   214→        };
+   215→   215→
+   216→   216→        const linkText = cleanText.substring(parsed.matchStart, parsed.matchEnd);
+   217→   217→
+   218→   218→        const link: ILink = {
+   219→   219→          range,
+   220→   220→          text: linkText,
+   221→   221→          decorations: {
+   222→   222→            pointerCursor: true,
+   223→   223→            underline: true,
+   224→   224→          },
+   225→   225→          activate(_event: MouseEvent, _text: string): void {
+   226→   226→            // Check if this is a "Problems panel" link
+   227→   227→            if ((parsed as any).isProblemsLink) {
+   228→   228→              // Open the Problems panel and focus the first diagnostic
+   229→   229→              const store = useIDEStore.getState();
+   230→   230→              store.setProblemsPanelOpen(true);
+   231→   231→              // Navigate to the first error
+   232→   232→              const firstError = store.diagnostics.find(d => d.severity === 'error');
+   233→   233→              if (firstError) {
+   234→   234→                navigateEditorToLine(firstError.line, firstError.column);
+   235→   235→              }
+   236→   236→              return;
+   237→   237→            }
+   238→   238→            navigateEditorToLine(parsed.line, parsed.column);
+   239→   239→          },
+   240→   240→          hover(event: MouseEvent, _text: string): void {
+   241→   241→            // Show tooltip near the mouse position
+   242→   242→            const terminalEl = xterm.element;
+   243→   243→            if (!terminalEl) return;
+   244→   244→
+   245→   245→            const tooltip = getOrCreateTooltip(terminalEl);
+   246→   246→            if ((parsed as any).isProblemsLink) {
+   247→   247→              tooltip.textContent = 'Click to open Problems panel';
+   248→   248→            } else {
+   249→   249→              tooltip.textContent = `Click to go to line ${parsed.line}${parsed.column ? `:${parsed.column}` : ''}`;
+   250→   250→            }
+   251→   251→            tooltip.style.display = 'block';
+   252→   252→
+   253→   253→            // Position relative to the terminal element
+   254→   254→            const termRect = terminalEl.getBoundingClientRect();
+   255→   255→            const offsetX = event.clientX - termRect.left + 12;
+   256→   256→            const offsetY = event.clientY - termRect.top - 28;
+   257→   257→            tooltip.style.left = `${offsetX}px`;
+   258→   258→            tooltip.style.top = `${offsetY}px`;
+   259→   259→          },
+   260→   260→          leave(): void {
+   261→   261→            hideTooltip();
+   262→   262→          },
+   263→   263→          dispose(): void {
+   264→   264→            hideTooltip();
+   265→   265→          },
+   266→   266→        };
+   267→   267→
+   268→   268→        callback([link]);
+   269→   269→      } catch (err) {
+   270→   270→        // Non-blocking: never let link parsing break terminal rendering
+   271→   271→        console.warn('[Terminal] Link provider error:', err);
+   272→   272→        callback(undefined);
+   273→   273→      }
+   274→   274→    },
+   275→   275→  };
+   276→   276→
+   277→   277→  xterm.registerLinkProvider(linkProvider);
+   278→   278→  console.log('[Terminal] Error link provider registered');
+   279→   279→}
+   280→   280→
+   281→   281→export function Terminal() {
+   282→   282→  const {
+   283→   283→    isTerminalOpen,
+   284→   284→    isExecuting,
+   285→   285→    setTerminalOpen,
+   286→   286→    setExecuting,
+   287→   287→    setCurrentRequestId,
+   288→   288→    setTerminalWriter,
+   289→   289→    settings,
+   290→   290→  } = useIDEStore();
+   291→   291→
+   292→   292→  const terminalRef = useRef<HTMLDivElement>(null);
+   293→   293→  const xtermRef = useRef<XTerm | null>(null);
+   294→   294→  const fitAddonRef = useRef<FitAddon | null>(null);
+   295→   295→  const [isMaximized, setIsMaximized] = useState(false);
+   296→   296→  // Track whether xterm has been initialized — persists across show/hide cycles
+   297→   297→  const isInitializedRef = useRef(false);
+   298→   298→  // Track the previous visibility state to detect hidden→visible transitions
+   299→   299→  const prevOpenRef = useRef(isTerminalOpen);
+   300→   300→  // Refs for cleanup of pending async operations (RAF / retry timers)
+   301→   301→  const pendingRafsRef = useRef<number[]>([]);
+   302→   302→  const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+   303→   303→
+   304→   304→  // ─── Helper: cancel all pending RAFs and timers ─────────────────────────
+   305→   305→
+   306→   306→  const cancelPending = useCallback(() => {
+   307→   307→    pendingRafsRef.current.forEach(id => cancelAnimationFrame(id));
+   308→   308→    pendingRafsRef.current = [];
+   309→   309→    pendingTimersRef.current.forEach(id => clearTimeout(id));
+   310→   310→    pendingTimersRef.current = [];
+   311→   311→  }, []);
+   312→   312→
+   313→   313→  // ─── Initialize xterm.js ONCE ──────────────────────────────────────────────
+   314→   314→  // The xterm instance is created only once and persists for the component's
+   315→   315→  // entire lifetime.  Hiding the terminal with CSS does NOT destroy it.
+   316→   316→  // This is the KEY fix: closing the terminal panel only hides it visually,
+   317→   317→  // it does NOT unmount the component or dispose the xterm instance.
+   318→   318→
+   319→   319→  useEffect(() => {
+   320→   320→    if (!terminalRef.current || isInitializedRef.current) return;
+   321→   321→
+   322→   322→    console.log('[Terminal] Creating xterm instance');
+   323→   323→
+   324→   324→    const { settings: currentSettings } = useIDEStore.getState();
+   325→   325→    const xterm = new XTerm({
+   326→   326→      cursorBlink: currentSettings.terminalCursorBlink,
+   327→   327→      cursorStyle: 'bar',
+   328→   328→      fontSize: currentSettings.terminalFontSize,
+   329→   329→      fontFamily: "'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
+   330→   330→      fontWeight: 'normal',
+   331→   331→      fontWeightBold: 'bold',
+   332→   332→      lineHeight: 1.35,
+   333→   333→      letterSpacing: 0,
+   334→   334→      theme: {
+   335→   335→        // VS Code Dark+ inspired theme
+   336→   336→        background: '#1e1e1e',
+   337→   337→        foreground: '#d4d4d4',
+   338→   338→        cursor: '#aeafad',
+   339→   339→        cursorAccent: '#1e1e1e',
+   340→   340→        selectionBackground: '#264f78',
+   341→   341→        selectionForeground: '#d4d4d4',
+   342→   342→        black: '#000000',
+   343→   343→        red: '#f44747',
+   344→   344→        green: '#6a9955',
+   345→   345→        yellow: '#d7ba7d',
+   346→   346→        blue: '#569cd6',
+   347→   347→        magenta: '#c586c0',
+   348→   348→        cyan: '#4ec9b0',
+   349→   349→        white: '#d4d4d4',
+   350→   350→        brightBlack: '#666666',
+   351→   351→        brightRed: '#f44747',
+   352→   352→        brightGreen: '#6a9955',
+   353→   353→        brightYellow: '#d7ba7d',
+   354→   354→        brightBlue: '#569cd6',
+   355→   355→        brightMagenta: '#c586c0',
+   356→   356→        brightCyan: '#4ec9b0',
+   357→   357→        brightWhite: '#d4d4d4',
+   358→   358→      },
+   359→   359→      allowTransparency: false,
+   360→   360→      scrollback: 5000,
+   361→   361→      convertEol: false, // PTY output already has proper \r\n; converting would cause double \r
+   362→   362→      scrollSensitivity: 1,
+   363→   363→      fastScrollSensitivity: 5,
+   364→   364→      smoothScrollDuration: 0,
+   365→   365→    });
+   366→   366→
+   367→   367→    const fitAddon = new FitAddon();
+   368→   368→    xterm.loadAddon(fitAddon);
+   369→   369→
+   370→   370→    // Open xterm in the container — the container is visible on first mount
+   371→   371→    // (isTerminalOpen defaults to true in the store)
+   372→   372→    xterm.open(terminalRef.current);
+   373→   373→
+   374→   374→    // Use double-RAF for initial fit — ensures layout is fully computed
+   375→   375→    const raf1 = requestAnimationFrame(() => {
+   376→   376→      const raf2 = requestAnimationFrame(() => {
+   377→   377→        try { fitAddon.fit(); } catch {}
+   378→   378→        xterm.focus();
+   379→   379→        console.log('[Terminal] Initial fit and focus complete');
+   380→   380→      });
+   381→   381→    });
+   382→   382→
+   383→   383→    xtermRef.current = xterm;
+   384→   384→    fitAddonRef.current = fitAddon;
+   385→   385→    isInitializedRef.current = true;
+   386→   386→
+   387→   387→    // Store xterm reference on the DOM element so executor-client can read dimensions
+   388→   388→    const termEl = terminalRef.current.querySelector('.xterm');
+   389→   389→    if (termEl) {
+   390→   390→      (termEl as any).__xterm = xterm;
+   391→   391→    }
+   392→   392→
+   393→   393→    // Register the terminal writer in the store so other components can write
+   394→   394→    setTerminalWriter((data: string) => {
+   395→   395→      xterm.write(data);
+   396→   396→    });
+   397→   397→    console.log('[Terminal] WebSocket attached (terminalWriter registered)');
+   398→   398→
+   399→   399→    // Minimal welcome message — VS Code style
+   400→   400→    xterm.writeln('\x1b[90mPress Run to execute.\x1b[0m');
+   401→   401→
+   402→   402→    // ─── Handle keyboard input ──────────────────────────────────────────────
+   403→   403→    // WebSocket + PTY architecture — keystrokes flow directly through
+   404→   404→    // the WebSocket to the PTY, and the PTY echo comes back through the same
+   405→   405→    // connection.
+   406→   406→    xterm.onData((data: string) => {
+   407→   407→      // Only accept input when a process is running
+   408→   408→      const state = useIDEStore.getState();
+   409→   409→      const isExec = state.isExecuting;
+   410→   410→      const reqId = state.currentRequestId;
+   411→   411→
+   412→   412→      if (!isExec) {
+   413→   413→        return;
+   414→   414→      }
+   415→   415→
+   416→   416→      if (!reqId) {
+   417→   417→        return;
+   418→   418→      }
+   419→   419→
+   420→   420→      // Send raw keystroke directly to the PTY via WebSocket
+   421→   421→      sendStdin(reqId, data);
+   422→   422→    });
+   423→   423→
+   424→   424→    // ─── Handle terminal resize ─────────────────────────────────────────────
+   425→   425→    xterm.onResize(({ rows, cols }) => {
+   426→   426→      const requestId = useIDEStore.getState().currentRequestId;
+   427→   427→      if (requestId && useIDEStore.getState().isExecuting) {
+   428→   428→        resizeTerminal(requestId, rows, cols);
+   429→   429→      }
+   430→   430→    });
+   431→   431→
+   432→   432→    // ─── Register link provider for clickable error lines ──────────────────
+   433→   433→    // When the user clicks on an error line in the terminal output
+   434→   434→    // (e.g., `File "main.py", line 5` or `main.c:10:5: error:`),
+   435→   435→    // the Monaco editor navigates to that line and highlights it.
+   436→   436→    registerErrorLinkProvider(xterm);
+   437→   437→
+   438→   438→    // Cleanup only on actual component unmount (page navigation, etc.)
+   439→   439→    return () => {
+   440→   440→      console.log('[Terminal] Component unmounting — disposing xterm');
+   441→   441→      cancelPending();
+   442→   442→      cancelAnimationFrame(raf1);
+   443→   443→      setTerminalWriter(null);
+   444→   444→      xterm.dispose();
+   445→   445→      xtermRef.current = null;
+   446→   446→      fitAddonRef.current = null;
+   447→   447→      isInitializedRef.current = false;
+   448→   448→    };
+   449→   449→  }, [setTerminalWriter, cancelPending]);
+   450→   450→
+   451→   451→  // ─── Refit when terminal becomes visible ──────────────────────────────────
+   452→   452→  //
+   453→   453→  // ROOT CAUSE of the blank-terminal bug:
+   454→   454→  //   Previously used Tailwind `hidden` class → `display: none` which completely
+   455→   455→  //   removes the element from the layout.  When `display: none` is active,
+   456→   456→  //   the xterm container has zero dimensions, the canvas renderer stops, and
+   457→   457→  //   requestAnimationFrame callbacks are paused.  When the element becomes
+   458→   458→  //   visible again, the browser needs a full layout pass before dimensions
+   459→   459→  //   are available.  The old setTimeout(100) was a race condition — sometimes
+   460→   460→  //   fit() ran before layout completed → 0 cols/0 rows → blank terminal.
+   461→   461→  //
+   462→   462→  // FIX (3-pronged approach):
+   463→   463→  //
+   464→   464→  //   A) CSS: Replace `display: none` with `visibility: hidden; height: 0;
+   465→   465→  //      overflow: hidden` — the element stays in the layout flow so the
+   466→   466→  //      browser can compute dimensions immediately when it becomes visible.
+   467→   467→  //      No CSS transition on height (instant show) to avoid mid-animation
+   468→   468→  //      fit() calls with intermediate dimensions.
+   469→   469→  //
+   470→   470→  //   B) Timing: Use double-requestAnimationFrame instead of setTimeout for
+   471→   471→  //      reliable post-layout timing.  RAF-1 fires after style recalc,
+   472→   472→  //      RAF-2 fires after layout paint — dimensions are guaranteed.
+   473→   473→  //
+   474→   474→  //   C) Coordination: After fit+refresh completes, resolve a "terminalReady"
+   475→   475→  //      promise that handleRun awaits before writing any data.  This
+   476→   476→  //      eliminates the race between "terminal shows" and "data starts
+   477→   477→  //      flowing".  If the terminal was already visible, the promise is
+   478→   478→  //      already resolved (no delay).
+   479→   479→
+   480→   480→  useEffect(() => {
+   481→   481→    const becameVisible = isTerminalOpen && !prevOpenRef.current;
+   482→   482→    prevOpenRef.current = isTerminalOpen;
+   483→   483→
+   484→   484→    if (!isTerminalOpen) {
+   485→   485→      console.log('[Terminal] Hidden');
+   486→   486→      cancelPending();
+   487→   487→      return;
+   488→   488→    }
+   489→   489→
+   490→   490→    if (!xtermRef.current || !fitAddonRef.current) return;
+   491→   491→
+   492→   492→    console.log(becameVisible ? '[Terminal] Shown (was hidden)' : '[Terminal] Refitting');
+   493→   493→
+   494→   494→    // Reset the ready promise — callers will await the new one
+   495→   495→    if (becameVisible) {
+   496→   496→      resetTerminalReady();
+   497→   497→    }
+   498→   498→
+   499→   499→    // Cancel any previous pending operations
+   500→   500→    cancelPending();
+   501→   501→
+   502→   502→    // Robust refit using double-RAF:
+   503→   503→    //   RAF 1 — fires after the browser has calculated styles/layout
+   504→   504→    //   RAF 2 — fires after the browser has painted, guaranteeing
+   505→   505→    //           container dimensions are available
+   506→   506→    let cancelled = false;
+   507→   507→
+   508→   508→    const raf1 = requestAnimationFrame(() => {
+   509→   509→      if (cancelled) return;
+   510→   510→
+   511→   511→      const raf2 = requestAnimationFrame(() => {
+   512→   512→        if (cancelled) return;
+   513→   513→
+   514→   514→        const container = terminalRef.current;
+   515→   515→        const xterm = xtermRef.current;
+   516→   516→        const fitAddon = fitAddonRef.current;
+   517→   517→
+   518→   518→        if (!container || !xterm || !fitAddon) {
+   519→   519→          // Signal ready anyway so handleRun doesn't hang
+   520→   520→          signalTerminalReady();
+   521→   521→          return;
+   522→   522→        }
+   523→   523→
+   524→   524→        // ── Verify container has non-zero dimensions ──────────────────
+   525→   525→        if (container.offsetWidth === 0 || container.offsetHeight === 0) {
+   526→   526→          console.warn('[Terminal] Container has zero dimensions after show, retrying in 50ms...');
+   527→   527→
+   528→   528→          // Retry — the layout hasn't settled yet
+   529→   529→          const retryTimer = setTimeout(() => {
+   530→   530→            if (cancelled) return;
+   531→   531→            try {
+   532→   532→              fitAddon.fit();
+   533→   533→              xterm.refresh(0, (xterm.rows || 1) - 1);
+   534→   534→              console.log('[Terminal] Reattached (retry fit succeeded)');
+   535→   535→            } catch (err) {
+   536→   536→              console.warn('[Terminal] Retry fit failed:', err);
+   537→   537→            }
+   538→   538→            signalTerminalReady();
+   539→   539→          }, 50);
+   540→   540→          pendingTimersRef.current.push(retryTimer);
+   541→   541→          return;
+   542→   542→        }
+   543→   543→
+   544→   544→        // ── Fit and refresh ────────────────────────────────────────────
+   545→   545→        try {
+   546→   546→          fitAddon.fit();
+   547→   547→          xterm.refresh(0, (xterm.rows || 1) - 1);
+   548→   548→          console.log('[Terminal] Fit executed after show');
+   549→   549→        } catch (err) {
+   550→   550→          console.warn('[Terminal] Fit failed after show:', err);
+   551→   551→        }
+   552→   552→
+   553→   553→        // Update the __xterm reference for executor-client (DOM may have changed)
+   554→   554→        const termEl = container.querySelector('.xterm');
+   555→   555→        if (termEl && xterm) {
+   556→   556→          (termEl as any).__xterm = xterm;
+   557→   557→        }
+   558→   558→
+   559→   559→        console.log('[Terminal] Reattached');
+   560→   560→
+   561→   561→        // Auto-focus if executing (the user clicked Run and terminal auto-opened)
+   562→   562→        if (useIDEStore.getState().isExecuting) {
+   563→   563→          xterm.focus();
+   564→   564→          console.log('[Terminal] Focused after show (executing)');
+   565→   565→        }
+   566→   566→
+   567→   567→        // Signal that the terminal is ready for data
+   568→   568→        signalTerminalReady();
+   569→   569→        console.log('[Terminal] WebSocket attached (output listeners active)');
+   570→   570→      });
+   571→   571→
+   572→   572→      pendingRafsRef.current.push(raf2);
+   573→   573→    });
+   574→   574→
+   575→   575→    pendingRafsRef.current.push(raf1);
+   576→   576→
+   577→   577→    return () => {
+   578→   578→      cancelled = true;
+   579→   579→      cancelPending();
+   580→   580→    };
+   581→   581→  }, [isTerminalOpen, cancelPending]);
+   582→   582→
+   583→   583→  // ─── Auto-focus terminal when execution starts ──────────────────────────
+   584→   584→
+   585→   585→  useEffect(() => {
+   586→   586→    if (isExecuting && isTerminalOpen && xtermRef.current) {
+   587→   587→      requestAnimationFrame(() => {
+   588→   588→        xtermRef.current?.focus();
+   589→   589→        console.log('[Terminal] Focused (execution started)');
+   590→   590→      });
+   591→   591→    }
+   592→   592→  }, [isExecuting, isTerminalOpen]);
+   593→   593→
+   594→   594→  // ─── Resize handling ─────────────────────────────────────────────────────
+   595→   595→
+   596→   596→  useEffect(() => {
+   597→   597→    if (!isTerminalOpen) return;
+   598→   598→
+   599→   599→    const handleResize = () => {
+   600→   600→      try {
+   601→   601→        fitAddonRef.current?.fit();
+   602→   602→      } catch {}
+   603→   603→    };
+   604→   604→
+   605→   605→    const timeout = setTimeout(handleResize, 50);
+   606→   606→    window.addEventListener('resize', handleResize);
+   607→   607→
+   608→   608→    const observer = new ResizeObserver(() => {
+   609→   609→      try { fitAddonRef.current?.fit(); } catch {}
+   610→   610→    });
+   611→   611→
+   612→   612→    if (terminalRef.current) {
+   613→   613→      observer.observe(terminalRef.current);
+   614→   614→    }
+   615→   615→
+   616→   616→    return () => {
+   617→   617→      clearTimeout(timeout);
+   618→   618→      window.removeEventListener('resize', handleResize);
+   619→   619→      observer.disconnect();
+   620→   620→    };
+   621→   621→  }, [isTerminalOpen, isMaximized]);
+   622→   622→
+   623→   623→  // React to terminal settings changes
+   624→   624→  useEffect(() => {
+   625→   625→    const xterm = xtermRef.current;
+   626→   626→    if (!xterm || !isInitializedRef.current) return;
+   627→   627→    xterm.options.cursorBlink = settings.terminalCursorBlink;
+   628→   628→    xterm.options.fontSize = settings.terminalFontSize;
+   629→   629→  }, [settings.terminalCursorBlink, settings.terminalFontSize]);
+   630→   630→
+   631→   631→  // ─── Clear terminal ──────────────────────────────────────────────────────
+   632→   632→
+   633→   633→  const handleClear = useCallback(() => {
+   634→   634→    const term = xtermRef.current;
+   635→   635→    if (term) {
+   636→   636→      term.clear();
+   637→   637→      term.write('\x1b[H');
+   638→   638→    }
+   639→   639→  }, []);
+   640→   640→
+   641→   641→  // ─── Render ──────────────────────────────────────────────────────────────
+   642→   642→  //
+   643→   643→  // KEY FIX: Instead of returning null when hidden, we render the terminal
+   644→   644→  // container but hide it with CSS. This keeps the xterm instance alive,
+   645→   645→  // preserves the buffer, and maintains the terminalWriter connection.
+   646→   646→  //
+   647→   647→  // Previous behavior: `if (!isTerminalOpen) return null;`
+   648→   648→  //   → Unmounts component → xterm.dispose() → terminalWriter = null → LOST OUTPUT
+   649→   649→  //
+   650→   650→  // Old CSS fix: Tailwind `hidden` class → `display: none`
+   651→   651→  //   → Element removed from layout → zero dimensions → xterm canvas renderer stops
+   652→   652→  //   → Race condition: fit() runs before layout completes → 0 cols/0 rows → BLANK
+   653→   653→  //
+   654→   654→  // NEW behavior: `visibility: hidden; height: 0; overflow: hidden`
+   655→   655→  //   → Element stays in layout flow → browser can compute dimensions immediately
+   656→   656→  //   → xterm canvas maintains internal state → buffer preserved
+   657→   657→  //   → terminalWriter stays connected → output accumulates in buffer
+   658→   658→  //   → When shown: fitAddon.fit() + refresh() restores rendering IMMEDIATELY
+   659→   659→  //   → No race condition because dimensions are available on first paint
+   660→   660→  //   → NO CSS transition — instant show/hide avoids mid-animation fit() issues
+   661→   661→
+   662→   662→  return (
+   663→   663→    <div
+   664→   664→      className={`flex flex-col ${
+   665→   665→        isMaximized && isTerminalOpen ? 'absolute inset-x-0 bottom-0 top-10 z-50' : ''
+   666→   666→      }`}
+   667→   667→      style={{
+   668→   668→        // Instead of display:none (Tailwind `hidden`), use visibility + height.
+   669→   669→        // This keeps the element in the layout flow so xterm dimensions are
+   670→   670→        // computable the moment the terminal becomes visible again.
+   671→   671→        //
+   672→   672→        // NO CSS transition on height — we need instant show/hide to avoid
+   673→   673→        // fit() computing dimensions during the animation (intermediate values).
+   674→   674→        ...(isTerminalOpen
+   675→   675→          ? {
+   676→   676→              height: isMaximized ? undefined : '16rem',  // h-64 = 16rem
+   677→   677→              backgroundColor: 'var(--ide-bg-terminal)',
+   678→   678→              borderTop: '1px solid var(--ide-border)',
+   679→   679→              cursor: 'default',
+   680→   680→            }
+   681→   681→          : {
+   682→   682→              height: 0,
+   683→   683→              minHeight: 0,
+   684→   684→              overflow: 'hidden',
+   685→   685→              visibility: 'hidden' as const,
+   686→   686→              borderTop: 'none',
+   687→   687→              cursor: 'default',
+   688→   688→            }),
+   689→   689→      }}
+   690→   690→    >
+   691→   691→      {/* Terminal Header — VS Code style */}
+   692→   692→      <div
+   693→   693→        className="flex items-center justify-between px-3 py-1 border-b shrink-0"
+   694→   694→        style={{ backgroundColor: 'var(--ide-bg-terminal-header)', borderColor: 'var(--ide-border)' }}
+   695→   695→      >
+   696→   696→        <div className="flex items-center gap-2">
+   697→   697→          <TerminalIcon className="h-3.5 w-3.5" style={{ color: 'var(--ide-text-primary)' }} />
+   698→   698→          <span className="text-xs font-medium" style={{ color: 'var(--ide-text-primary)' }}>Terminal</span>
+   699→   699→          {isExecuting && (
+   700→   700→            <div className="flex items-center gap-1.5 ml-2">
+   701→   701→              <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: 'var(--ide-success)' }} />
+   702→   702→              <span className="text-[10px]" style={{ color: 'var(--ide-success)' }}>Running</span>
+   703→   703→            </div>
+   704→   704→          )}
+   705→   705→        </div>
+   706→   706→        <div className="flex items-center gap-0.5">
+   707→   707→          <Button
+   708→   708→            variant="ghost"
+   709→   709→            size="icon"
+   710→   710→            className="ide-terminal-btn h-6 w-6"
+   711→   711→            style={{ color: 'var(--ide-text-muted)' }}
+   712→   712→            onClick={handleClear}
+   713→   713→          >
+   714→   714→            <Trash2 className="h-3 w-3" />
+   715→   715→          </Button>
+   716→   716→          <Button
+   717→   717→            variant="ghost"
+   718→   718→            size="icon"
+   719→   719→            className="ide-terminal-btn h-6 w-6"
+   720→   720→            style={{ color: 'var(--ide-text-muted)' }}
+   721→   721→            onClick={() => setIsMaximized(!isMaximized)}
+   722→   722→          >
+   723→   723→            {isMaximized ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+   724→   724→          </Button>
+   725→   725→          <Button
+   726→   726→            variant="ghost"
+   727→   727→            size="icon"
+   728→   728→            className="ide-terminal-btn h-6 w-6"
+   729→   729→            style={{ color: 'var(--ide-text-muted)' }}
+   730→   730→            onClick={() => setTerminalOpen(false)}
+   731→   731→          >
+   732→   732→            <X className="h-3 w-3" />
+   733→   733→          </Button>
+   734→   734→        </div>
+   735→   735→      </div>
+   736→   736→
+   737→   737→      {/* xterm.js Container — always in DOM, visibility-hidden when terminal is closed */}
+   738→   738→      <div
+   739→   739→        ref={terminalRef}
+   740→   740→        className="ide-terminal-area flex-1 overflow-hidden"
+   741→   741→        style={{ minHeight: 0 }}
+   742→   742→        onClick={() => xtermRef.current?.focus()}
+   743→   743→      />
+   744→   744→    </div>
+   745→   745→  );
+   746→   746→}
+   747→   747→

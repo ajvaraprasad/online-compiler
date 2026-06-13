@@ -31,7 +31,7 @@ const PHASE_ICONS: Record<string, string> = {
 };
 
 export function StatusBar({ isConnected }: StatusBarProps) {
-  const { language, tabs, activeTabId, isExecuting, pipelineState, diagnostics } = useIDEStore();
+  const { language, tabs, activeTabId, isExecuting, pipelineState, diagnostics, executionState } = useIDEStore();
   const activeTab = tabs.find(t => t.id === activeTabId);
 
   // Get latest phase info
@@ -107,6 +107,14 @@ export function StatusBar({ isConnected }: StatusBarProps) {
             </div>
           ) : null}
         </div>
+
+        {/* Execution state indicator */}
+        {!isExecuting && executionState === 'INVALID' && (
+          <div className="flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" style={{ color: 'var(--ide-error)' }} />
+            <span className="text-[10px]" style={{ color: 'var(--ide-error)' }}>Code has errors</span>
+          </div>
+        )}
 
         {/* Execution status with pipeline info */}
         {isExecuting && currentPhase && (

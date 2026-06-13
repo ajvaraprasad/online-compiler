@@ -1,0 +1,763 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useCallback, useRef } from 'react';
+     4→import { useIDEStore } from '@/store/useIDEStore';
+     5→import { filesAPI, LANGUAGE_NAMES, LANGUAGE_EXTENSIONS } from '@/lib/api';
+     6→import { executeCode, killExecution, onConnectionChange, isConnected } from '@/lib/executor-client';
+     7→import { waitForTerminalReady } from './Terminal';
+     8→import { getEditorInstance } from './ProblemsPanel';
+     9→import type { WSEvent } from '@/lib/executor-client';
+    10→import type { CompilerPhaseInfo } from '@/store/useIDEStore';
+    11→import {
+    12→  Play,
+    13→  Square,
+    14→  Download,
+    15→  Save,
+    16→  Plus,
+    17→  Sun,
+    18→  Moon,
+    19→  Loader2,
+    20→  AlertCircle,
+    21→} from 'lucide-react';
+    22→import { Button } from '@/components/ui/button';
+    23→import {
+    24→  Select,
+    25→  SelectContent,
+    26→  SelectItem,
+    27→  SelectTrigger,
+    28→  SelectValue,
+    29→} from '@/components/ui/select';
+    30→import {
+    31→  Tooltip,
+    32→  TooltipContent,
+    33→  TooltipProvider,
+    34→  TooltipTrigger,
+    35→} from '@/components/ui/tooltip';
+    36→import {
+    37→  Dialog,
+    38→  DialogContent,
+    39→  DialogHeader,
+    40→  DialogTitle,
+    41→  DialogDescription,
+    42→} from '@/components/ui/dialog';
+    43→
+    44→// ANSI escape codes for colored terminal output
+    45→// Consistent, minimal color scheme:
+    46→//   - Green: success / info messages
+    47→//   - Red: errors / failures
+    48→//   - Yellow: warnings
+    49→//   - Gray/DIM: skipped / secondary info
+    50→const ANSI = {
+    51→  RESET: '\x1b[0m',
+    52→  BOLD: '\x1b[1m',
+    53→  DIM: '\x1b[2m',
+    54→  RED: '\x1b[31m',
+    55→  GREEN: '\x1b[32m',
+    56→  YELLOW: '\x1b[33m',
+    57→  CYAN: '\x1b[36m',
+    58→  GRAY: '\x1b[90m',
+    59→};
+    60→
+    61→// Phase display names — no emojis, clean text only
+    62→const PHASE_DISPLAY: Record<string, { name: string }> = {
+    63→  lexical_analysis: { name: 'Lexical Analysis' },
+    64→  parsing: { name: 'Parsing' },
+    65→  semantic_analysis: { name: 'Semantic Analysis' },
+    66→  ir_generation: { name: 'IR Generation' },
+    67→  optimization: { name: 'Optimization' },
+    68→  security_analysis: { name: 'Security Analysis' },
+    69→  code_generation: { name: 'Code Generation' },
+    70→  compilation: { name: 'Compilation' },
+    71→  execution: { name: 'Execution' },
+    72→  output_processing: { name: 'Output Processing' },
+    73→};
+    74→
+    75→// Execution mode display — clean text labels
+    76→const MODE_DISPLAY: Record<string, { name: string; color: string }> = {
+    77→  ir_vm: { name: 'IR VM', color: ANSI.CYAN },
+    78→  codegen: { name: 'Codegen', color: ANSI.YELLOW },
+    79→  native: { name: 'Native', color: ANSI.GREEN },
+    80→};
+    81→
+    82→function formatPhaseData(phase: string, data: Record<string, unknown>): string {
+    83→  const parts: string[] = [];
+    84→  switch (phase) {
+    85→    case 'lexical_analysis':
+    86→      if (data.totalTokens) parts.push(`${data.totalTokens} tokens`);
+    87→      if (data.linesOfCode) parts.push(`${data.linesOfCode} LOC`);
+    88→      break;
+    89→    case 'parsing':
+    90→      if (data.totalNodes) parts.push(`${data.totalNodes} nodes`);
+    91→      if (data.functionCount) parts.push(`${data.functionCount} functions`);
+    92→      break;
+    93→    case 'semantic_analysis':
+    94→      if (data.totalSymbols) parts.push(`${data.totalSymbols} symbols`);
+    95→      break;
+    96→    case 'ir_generation':
+    97→      if (data.totalInstructions) parts.push(`${data.totalInstructions} instructions`);
+    98→      break;
+    99→    case 'optimization':
+   100→      if (data.instructionsBefore && data.instructionsAfter) {
+   101→        parts.push(`${data.instructionsBefore} -> ${data.instructionsAfter} instructions`);
+   102→      }
+   103→      break;
+   104→    case 'security_analysis':
+   105→      if (data.riskLevel) parts.push(`risk: ${data.riskLevel}`);
+   106→      break;
+   107→    case 'code_generation':
+   108→      if (data.mode) {
+   109→        const modeInfo = MODE_DISPLAY[data.mode as string];
+   110→        parts.push(modeInfo?.name || String(data.mode));
+   111→      }
+   112→      if (data.linesGenerated) parts.push(`${data.linesGenerated} lines`);
+   113→      break;
+   114→    case 'compilation':
+   115→      break;
+   116→    case 'execution':
+   117→      if (data.mode) {
+   118→        const modeInfo = MODE_DISPLAY[data.mode as string];
+   119→        parts.push(modeInfo?.name || String(data.mode));
+   120→      }
+   121→      break;
+   122→  }
+   123→  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+   124→}
+   125→
+   126→export function Toolbar() {
+   127→  const {
+   128→    tabs,
+   129→    activeTabId,
+   130→    language,
+   131→    isExecuting,
+   132→    isAuthenticated,
+   133→    setLanguage,
+   134→    addTab,
+   135→    markTabClean,
+   136→    updateTabContent,
+   137→    setTerminalOpen,
+   138→    writeToTerminal,
+   139→    setExecuting,
+   140→    setCurrentRequestId,
+   141→    remoteFiles,
+   142→    setRemoteFiles,
+   143→    theme,
+   144→    setTheme,
+   145→    updatePipelinePhase,
+   146→    resetPipeline,
+   147→    setPipelineMetrics,
+   148→    diagnostics,
+   149→  } = useIDEStore();
+   150→
+   151→  const [isSaving, setIsSaving] = useState(false);
+   152→  const [isStdinDialog, setIsStdinDialog] = useState(false);
+   153→  const currentRequestIdRef = useRef<string | null>(null);
+   154→  const forceRunRef = useRef(false);
+   155→
+   156→  const activeTab = tabs.find(t => t.id === activeTabId);
+   157→
+   158→  const handleRun = useCallback(() => {
+   159→    if (!activeTab || isExecuting) return;
+   160→
+   161→    // ─── Check for syntax errors before executing ──────────────────────
+   162→    // If the code has error-level diagnostics, show a concise summary in
+   163→    // the terminal (NOT the full error list — that belongs in the Problems
+   164→    // panel). Navigate to the first error. The user can still force-run by
+   165→    // clicking Run again within 3 seconds.
+   166→    const { diagnostics } = useIDEStore.getState();
+   167→    const errors = diagnostics.filter(d => d.severity === 'error');
+   168→
+   169→    if (errors.length > 0 && !forceRunRef.current) {
+   170→      // Show concise error summary in terminal (VS Code behavior)
+   171→      setTerminalOpen(true);
+   172→      const store = useIDEStore.getState();
+   173→
+   174→      // Wait for terminal to be ready before writing
+   175→      const terminalReadyWithTimeout = Promise.race([
+   176→        waitForTerminalReady(),
+   177→        new Promise<void>((resolve) => setTimeout(resolve, 200)),
+   178→      ]);
+   179→
+   180→      terminalReadyWithTimeout.then(() => {
+   181→        if (store.settings.terminalClearOnRun) {
+   182→          store.clearTerminal();
+   183→        }
+   184→
+   185→        const errorCount = errors.length;
+   186→        const errorWord = errorCount === 1 ? 'Error' : 'Errors';
+   187→
+   188→        store.writeToTerminal(
+   189→          ANSI.RED + ANSI.BOLD + 'Compilation failed.' + ANSI.RESET + '\r\n'
+   190→        );
+   191→        store.writeToTerminal(
+   192→          ANSI.RED + `${errorCount} ${errorWord} found.` + ANSI.RESET + '\r\n'
+   193→        );
+   194→        store.writeToTerminal(
+   195→          ANSI.DIM + 'See Problems panel for details.' + ANSI.RESET + '\r\n'
+   196→        );
+   197→        store.writeToTerminal(
+   198→          '\r\n' + ANSI.YELLOW + 'Fix the errors or press Run again to force execution.' + ANSI.RESET + '\r\n'
+   199→        );
+   200→
+   201→        // Navigate to the first error
+   202→        const firstError = errors[0];
+   203→        const editor = getEditorInstance();
+   204→        if (editor && firstError) {
+   205→          editor.revealLineInCenter(firstError.line);
+   206→          editor.setPosition({
+   207→            lineNumber: firstError.line,
+   208→            column: firstError.column,
+   209→          });
+   210→          // Highlight the error range temporarily
+   211→          const monaco = (window as any).monaco;
+   212→          if (monaco && firstError.endColumn > firstError.column) {
+   213→            editor.setSelection(new monaco.Range(
+   214→              firstError.line, firstError.column,
+   215→              firstError.endLine || firstError.line, firstError.endColumn
+   216→            ));
+   217→          }
+   218→          editor.focus();
+   219→        }
+   220→      });
+   221→
+   222→      // Allow force-run on next click within 3 seconds
+   223→      forceRunRef.current = true;
+   224→      setTimeout(() => { forceRunRef.current = false; }, 3000);
+   225→      return;
+   226→    }
+   227→
+   228→    // Reset force-run flag
+   229→    forceRunRef.current = false;
+   230→
+   231→    setTerminalOpen(true);
+   232→    setExecuting(true);
+   233→    resetPipeline();
+   234→
+   235→    const requestId = `exec_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+   236→    setCurrentRequestId(requestId);
+   237→    currentRequestIdRef.current = requestId;
+   238→
+   239→    // Wait for the terminal to be visible and the xterm renderer to complete
+   240→    // a fit+refresh cycle before writing any data.  This eliminates the race
+   241→    // condition where output is written while the container still has zero
+   242→    // dimensions after transitioning from display:none / visibility:hidden.
+   243→    //
+   244→    // The terminalReady promise is resolved inside Terminal.tsx after:
+   245→    //   1. The container becomes visible (CSS transition completes)
+   246→    //   2. fitAddon.fit() succeeds (dimensions are non-zero)
+   247→    //   3. terminal.refresh() forces a full repaint
+   248→    //
+   249→    // Fallback: if the promise takes too long (e.g. terminal was already
+   250→    // visible), the 200ms timeout ensures we don't hang forever.
+   251→    const terminalReadyWithTimeout = Promise.race([
+   252→      waitForTerminalReady(),
+   253→      new Promise<void>((resolve) => setTimeout(resolve, 200)),
+   254→    ]);
+   255→
+   256→    terminalReadyWithTimeout.then(() => {
+   257→      const store = useIDEStore.getState();
+   258→      if (store.settings.terminalClearOnRun) {
+   259→        store.clearTerminal();
+   260→      }
+   261→
+   262→      // Check if the terminal service is reachable
+   263→      if (!isConnected()) {
+   264→        store.writeToTerminal(
+   265→          ANSI.YELLOW + '[WARN]  Terminal service not connected. Attempting to connect...' + ANSI.RESET + '\r\n'
+   266→        );
+   267→      }
+   268→
+   269→      // Define the WebSocket event handler — handles pipeline events from the compiler engine
+   270→      const handleEvent = (event: WSEvent) => {
+   271→        const currentState = useIDEStore.getState();
+   272→        // Ignore events for a different requestId
+   273→        if (currentState.currentRequestId !== requestId) return;
+   274→
+   275→        switch (event.type) {
+   276→          case 'start': {
+   277→            // Already set executing=true above
+   278→            break;
+   279→          }
+   280→          case 'phase': {
+   281→            // Pipeline phase transitions from the compiler engine
+   282→            try {
+   283→              const phaseData = JSON.parse(event.data || '{}');
+   284→              const phaseName = phaseData.phase;
+   285→              const display = PHASE_DISPLAY[phaseName] || { name: phaseName };
+   286→              const phaseInfo: CompilerPhaseInfo = {
+   287→                phase: phaseName,
+   288→                status: phaseData.status,
+   289→                durationMs: phaseData.durationMs,
+   290→                data: phaseData.data,
+   291→              };
+   292→              currentState.updatePipelinePhase(phaseInfo);
+   293→
+   294→              if (phaseData.status === 'running') {
+   295→                // [INFO] Phase Name...
+   296→                currentState.writeToTerminal(
+   297→                  ANSI.GREEN + `[INFO]  ${display.name}...` + ANSI.RESET + '\r\n'
+   298→                );
+   299→              } else if (phaseData.status === 'completed') {
+   300→                const dataStr = phaseData.data ? formatPhaseData(phaseName, phaseData.data) : '';
+   301→                if (phaseData.warning) {
+   302→                  // [WARN] Phase completed with warnings
+   303→                  currentState.writeToTerminal(
+   304→                    ANSI.YELLOW + `[WARN]  ${display.name}${dataStr}` + ANSI.RESET + '\r\n'
+   305→                  );
+   306→                } else {
+   307→                  // [OK] Phase completed successfully
+   308→                  currentState.writeToTerminal(
+   309→                    ANSI.DIM + `[OK]    ${display.name}${dataStr}` + ANSI.RESET + '\r\n'
+   310→                  );
+   311→                }
+   312→              } else if (phaseData.status === 'failed') {
+   313→                const dataStr = phaseData.data ? formatPhaseData(phaseName, phaseData.data) : '';
+   314→                if (phaseData.fatal) {
+   315→                  // [FATAL] Phase failed — pipeline terminates
+   316→                  currentState.writeToTerminal(
+   317→                    ANSI.RED + ANSI.BOLD + `[FATAL] ${display.name} failed${dataStr}` + ANSI.RESET + '\r\n'
+   318→                  );
+   319→                } else {
+   320→                  // [ERROR] Phase failed (non-fatal)
+   321→                  currentState.writeToTerminal(
+   322→                    ANSI.RED + `[ERROR] ${display.name} failed${dataStr}` + ANSI.RESET + '\r\n'
+   323→                  );
+   324→                }
+   325→              } else if (phaseData.status === 'skipped') {
+   326→                const reason = phaseData.message ? ` -- ${phaseData.message}` : '';
+   327→                // [SKIP] Phase -- reason
+   328→                currentState.writeToTerminal(
+   329→                  ANSI.DIM + `[SKIP]  ${display.name}${reason}` + ANSI.RESET + '\r\n'
+   330→                );
+   331→              }
+   332→            } catch {}
+   333→            break;
+   334→          }
+   335→          case 'stdout': {
+   336→            // PTY output includes echo + program output — just display it
+   337→            currentState.writeToTerminal(event.data || '');
+   338→            break;
+   339→          }
+   340→          case 'stderr': {
+   341→            // Check if this is a pipeline diagnostic (already has ANSI codes)
+   342→            const data = event.data || '';
+   343→            if (data.includes('[ERROR]') || data.includes('[WARN]') || data.includes('[FATAL]') || data.includes('Compilation terminated.')) {
+   344→              // Pipeline diagnostic messages — display as-is (already have ANSI codes)
+   345→              currentState.writeToTerminal(data);
+   346→            } else {
+   347→              // Regular stderr from program — display in red
+   348→              currentState.writeToTerminal(ANSI.RED + data + ANSI.RESET);
+   349→            }
+   350→            break;
+   351→          }
+   352→          case 'killed': {
+   353→            currentState.writeToTerminal('\r\n' + ANSI.YELLOW + 'Execution killed' + ANSI.RESET + '\r\n');
+   354→            break;
+   355→          }
+   356→          case 'end': {
+   357→            currentState.setExecuting(false);
+   358→
+   359→            const exitCode = event.exitCode;
+   360→            const executionTime = event.executionTime || 0;
+   361→            const timeStr = (executionTime / 1000).toFixed(2);
+   362→
+   363→            // Parse summary if available
+   364→            let summary: Record<string, any> | undefined;
+   365→            try {
+   366→              const endPayload = JSON.parse(event.data || '{}');
+   367→              summary = endPayload.summary;
+   368→              // Store metrics in pipeline state
+   369→              if (summary?.metrics) {
+   370→                currentState.setPipelineMetrics(summary.metrics);
+   371→              }
+   372→            } catch {}
+   373→
+   374→            currentState.writeToTerminal('\r\n');
+   375→
+   376→            if (exitCode === 0) {
+   377→              // VS Code style: clean exit status
+   378→              currentState.writeToTerminal(
+   379→                ANSI.DIM + `Process exited with code 0 in ${timeStr}s` + ANSI.RESET + '\r\n'
+   380→              );
+   381→            } else if (exitCode === -1) {
+   382→              currentState.writeToTerminal(
+   383→                ANSI.RED + `Process timed out after ${timeStr}s` + ANSI.RESET + '\r\n'
+   384→              );
+   385→            } else {
+   386→              // Check if it was blocked by a pipeline phase
+   387→              const phases = currentState.pipelineState.phases;
+   388→              const failedPhase = phases.find(p => p.status === 'failed');
+   389→              if (failedPhase) {
+   390→                const display = PHASE_DISPLAY[failedPhase.phase] || { name: failedPhase.phase };
+   391→                currentState.writeToTerminal(
+   392→                  ANSI.RED + `Execution blocked: ${display.name} failed` + ANSI.RESET + '\r\n'
+   393→                );
+   394→              } else {
+   395→                currentState.writeToTerminal(
+   396→                  ANSI.RED + `Process exited with code ${exitCode} in ${timeStr}s` + ANSI.RESET + '\r\n'
+   397→                );
+   398→              }
+   399→            }
+   400→
+   401→            if (currentRequestIdRef.current === requestId) {
+   402→              currentState.setCurrentRequestId(null);
+   403→              currentRequestIdRef.current = null;
+   404→            }
+   405→            break;
+   406→          }
+   407→        }
+   408→      };
+   409→
+   410→      // Start execution via WebSocket -> PTY on the backend.
+   411→      executeCode(
+   412→        activeTab.content,
+   413→        language,
+   414→        requestId,
+   415→        undefined, // interactive: all input via terminal
+   416→        true,
+   417→        handleEvent
+   418→      );
+   419→    }); // Wait for terminal ready
+   420→  }, [activeTab, isExecuting, language, setTerminalOpen, setExecuting, setCurrentRequestId, resetPipeline, updatePipelinePhase, setPipelineMetrics]);
+   421→
+   422→  const handleStop = useCallback(async () => {
+   423→    const state = useIDEStore.getState();
+   424→    const requestId = state.currentRequestId || currentRequestIdRef.current;
+   425→
+   426→    if (requestId) {
+   427→      await killExecution(requestId);
+   428→    }
+   429→
+   430→    setExecuting(false);
+   431→    setCurrentRequestId(null);
+   432→    currentRequestIdRef.current = null;
+   433→    writeToTerminal(ANSI.YELLOW + 'Execution stopped by user' + ANSI.RESET + '\r\n');
+   434→  }, [setExecuting, setCurrentRequestId, writeToTerminal]);
+   435→
+   436→  const handleDownload = () => {
+   437→    if (!activeTab) return;
+   438→
+   439→    const blob = new Blob([activeTab.content], { type: 'text/plain' });
+   440→    const url = URL.createObjectURL(blob);
+   441→    const a = document.createElement('a');
+   442→    a.href = url;
+   443→    a.download = activeTab.name;
+   444→    document.body.appendChild(a);
+   445→    a.click();
+   446→    document.body.removeChild(a);
+   447→    URL.revokeObjectURL(url);
+   448→  };
+   449→
+   450→  const handleSave = async () => {
+   451→    if (!activeTab || !isAuthenticated) return;
+   452→
+   453→    setIsSaving(true);
+   454→    try {
+   455→      if (activeTab.isRemote) {
+   456→        await filesAPI.update(activeTab.id, {
+   457→          content: activeTab.content,
+   458→          name: activeTab.name,
+   459→          language: activeTab.language,
+   460→        });
+   461→      } else {
+   462→        const data = await filesAPI.create(activeTab.name, activeTab.language, activeTab.content);
+   463→        setRemoteFiles([...remoteFiles, data.file]);
+   464→      }
+   465→      markTabClean(activeTab.id);
+   466→    } catch (err: any) {
+   467→      console.error('Save failed:', err.message);
+   468→    } finally {
+   469→      setIsSaving(false);
+   470→    }
+   471→  };
+   472→
+   473→  const handleNewFile = () => {
+   474→    const ext = LANGUAGE_EXTENSIONS[language] || '.txt';
+   475→    addTab(`untitled${ext}`, language);
+   476→  };
+   477→
+   478→  const handleLanguageChange = (newLang: string) => {
+   479→    if (activeTab) {
+   480→      const ext = LANGUAGE_EXTENSIONS[newLang] || '.txt';
+   481→      const baseName = activeTab.name.replace(/\.[^.]+$/, '');
+   482→      const newName = baseName + ext;
+   483→      // Only change language and file extension — do NOT replace content with template
+   484→      useIDEStore.setState(state => ({
+   485→        language: newLang,
+   486→        tabs: state.tabs.map(t =>
+   487→          t.id === activeTab.id ? { ...t, language: newLang, name: newName, isDirty: true } : t
+   488→        ),
+   489→      }));
+   490→    } else {
+   491→      setLanguage(newLang);
+   492→    }
+   493→  };
+   494→
+   495→  // Get current pipeline phase for the run button
+   496→  const { pipelineState } = useIDEStore();
+   497→  const errorCount = diagnostics.filter(d => d.severity === 'error').length;
+   498→  const currentPhaseDisplay = pipelineState.currentPhase
+   499→    ? (PHASE_DISPLAY[pipelineState.currentPhase]?.name || pipelineState.currentPhase)
+   500→    : null;
+   501→
+   502→  return (
+   503→    <>
+   504→      <div className="h-10 border-b flex items-center justify-between px-3 shrink-0" style={{ backgroundColor: 'var(--ide-bg-toolbar)', borderColor: 'var(--ide-border)' }}>
+   505→        {/* Left section - Logo and file actions */}
+   506→        <div className="flex items-center gap-2">
+   507→          <div className="flex items-center gap-2 mr-3">
+   508→            <div className="w-5 h-5 rounded bg-gradient-to-br from-[#89b4fa] to-[#cba6f7] flex items-center justify-center">
+   509→              <span className="text-[10px] font-bold text-[#1e1e2e]">CF</span>
+   510→            </div>
+   511→            <span className="text-xs font-semibold hidden sm:inline" style={{ color: 'var(--ide-text-primary)' }}>CodeForge</span>
+   512→          </div>
+   513→
+   514→          <TooltipProvider>
+   515→            <Tooltip>
+   516→              <TooltipTrigger asChild>
+   517→                <Button
+   518→                  variant="ghost"
+   519→                  size="icon"
+   520→                  className="ide-icon-btn h-7 w-7"
+   521→                  style={{ color: 'var(--ide-text-dim)' }}
+   522→                  onClick={handleNewFile}
+   523→                >
+   524→                  <Plus className="h-4 w-4" />
+   525→                </Button>
+   526→              </TooltipTrigger>
+   527→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   528→                New File
+   529→              </TooltipContent>
+   530→            </Tooltip>
+   531→
+   532→            <Tooltip>
+   533→              <TooltipTrigger asChild>
+   534→                <Button
+   535→                  variant="ghost"
+   536→                  size="icon"
+   537→                  className="ide-icon-btn h-7 w-7"
+   538→                  style={{ color: 'var(--ide-text-dim)' }}
+   539→                  onClick={handleSave}
+   540→                  disabled={!activeTab || isSaving}
+   541→                >
+   542→                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+   543→                </Button>
+   544→              </TooltipTrigger>
+   545→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   546→                Save (Ctrl+S)
+   547→              </TooltipContent>
+   548→            </Tooltip>
+   549→          </TooltipProvider>
+   550→        </div>
+   551→
+   552→        {/* Center section - Language selector and run controls */}
+   553→        <div className="flex items-center gap-2">
+   554→          <Select value={language} onValueChange={handleLanguageChange}>
+   555→            <SelectTrigger className="h-7 w-[130px] text-xs" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   556→              <SelectValue />
+   557→            </SelectTrigger>
+   558→            <SelectContent style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)' }}>
+   559→              {Object.entries(LANGUAGE_NAMES).map(([key, name]) => (
+   560→                <SelectItem key={key} value={key} className="text-xs" style={{ color: 'var(--ide-text-primary)' }}>
+   561→                  {name}
+   562→                </SelectItem>
+   563→              ))}
+   564→            </SelectContent>
+   565→          </Select>
+   566→
+   567→          <TooltipProvider>
+   568→            <Tooltip>
+   569→              <TooltipTrigger asChild>
+   570→                <Button
+   571→                  variant="ghost"
+   572→                  size="sm"
+   573→                  className="h-7 text-[10px]"
+   574→                  style={{ color: 'var(--ide-text-dim)' }}
+   575→                  onClick={() => setIsStdinDialog(true)}
+   576→                >
+   577→                  INPUT
+   578→                </Button>
+   579→              </TooltipTrigger>
+   580→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   581→                How to Provide Input
+   582→              </TooltipContent>
+   583→            </Tooltip>
+   584→          </TooltipProvider>
+   585→
+   586→          {isExecuting ? (
+   587→            <Button
+   588→              size="sm"
+   589→              className="ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3"
+   590→              style={{ backgroundColor: 'var(--ide-error)', color: 'var(--ide-bg-base)' }}
+   591→              onClick={handleStop}
+   592→            >
+   593→              <Square className="h-3 w-3 fill-current" />
+   594→              Stop
+   595→            </Button>
+   596→          ) : (
+   597→            <div className="flex items-center gap-1">
+   598→              <Button
+   599→                size="sm"
+   600→                className="ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3"
+   601→                style={{ backgroundColor: errorCount > 0 ? 'var(--ide-warning)' : 'var(--ide-success)', color: 'var(--ide-bg-base)' }}
+   602→                onClick={handleRun}
+   603→                disabled={!activeTab}
+   604→              >
+   605→                <Play className="h-3 w-3 fill-current" />
+   606→                Run
+   607→              </Button>
+   608→              {errorCount > 0 && (
+   609→                <TooltipProvider>
+   610→                  <Tooltip>
+   611→                    <TooltipTrigger asChild>
+   612→                      <div className="ide-status-item flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-sm" style={{ backgroundColor: 'var(--ide-error)', opacity: 0.15 }}
+   613→                        onClick={() => {
+   614→                          // Navigate to first error
+   615→                          const firstError = diagnostics.find(d => d.severity === 'error');
+   616→                          if (firstError) {
+   617→                            const editor = getEditorInstance();
+   618→                            if (editor) {
+   619→                              editor.revealLineInCenter(firstError.line);
+   620→                              editor.setPosition({ lineNumber: firstError.line, column: firstError.column });
+   621→                              editor.focus();
+   622→                            }
+   623→                          }
+   624→                        }}
+   625→                      >
+   626→                        <AlertCircle className="h-3 w-3" style={{ color: 'var(--ide-error)' }} />
+   627→                        <span className="text-[9px] font-bold ml-0.5" style={{ color: 'var(--ide-error)' }}>{errorCount}</span>
+   628→                      </div>
+   629→                    </TooltipTrigger>
+   630→                    <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   631→                      {errorCount} error{errorCount > 1 ? 's' : ''} — click to jump to first
+   632→                    </TooltipContent>
+   633→                  </Tooltip>
+   634→                </TooltipProvider>
+   635→              )}
+   636→            </div>
+   637→          )}
+   638→
+   639→          {/* Current compiler phase indicator */}
+   640→          {isExecuting && currentPhaseDisplay && (
+   641→            <span className="text-[10px] animate-pulse hidden sm:inline" style={{ color: 'var(--ide-warning)' }}>
+   642→              {currentPhaseDisplay}...
+   643→            </span>
+   644→          )}
+   645→        </div>
+   646→
+   647→        {/* Right section */}
+   648→        <div className="flex items-center gap-2">
+   649→          <TooltipProvider>
+   650→            <Tooltip>
+   651→              <TooltipTrigger asChild>
+   652→                <Button
+   653→                  variant="ghost"
+   654→                  size="icon"
+   655→                  className="ide-icon-btn h-7 w-7"
+   656→                  style={{ color: 'var(--ide-text-dim)' }}
+   657→                  onClick={handleDownload}
+   658→                  disabled={!activeTab}
+   659→                >
+   660→                  <Download className="h-4 w-4" />
+   661→                </Button>
+   662→              </TooltipTrigger>
+   663→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   664→                Download File
+   665→              </TooltipContent>
+   666→            </Tooltip>
+   667→
+   668→            <Tooltip>
+   669→              <TooltipTrigger asChild>
+   670→                <Button
+   671→                  variant="ghost"
+   672→                  size="icon"
+   673→                  className="ide-icon-btn h-7 w-7"
+   674→                  style={{ color: 'var(--ide-text-dim)' }}
+   675→                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+   676→                >
+   677→                  {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+   678→                </Button>
+   679→              </TooltipTrigger>
+   680→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   681→                Toggle Theme
+   682→              </TooltipContent>
+   683→            </Tooltip>
+   684→          </TooltipProvider>
+   685→        </div>
+   686→      </div>
+   687→
+   688→      {/* Stdin Help Dialog */}
+   689→      <Dialog open={isStdinDialog} onOpenChange={setIsStdinDialog}>
+   690→        <DialogContent className="sm:max-w-[500px]" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   691→          <DialogHeader>
+   692→            <DialogTitle style={{ color: 'var(--ide-text-primary)' }}>How to Provide Input</DialogTitle>
+   693→            <DialogDescription style={{ color: 'var(--ide-text-secondary)' }}>
+   694→              Type directly in the terminal while your program is running
+   695→            </DialogDescription>
+   696→          </DialogHeader>
+   697→          <div className="space-y-4 mt-2">
+   698→            <div className="rounded-md p-4 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+   699→              <p className="text-sm font-medium mb-3" style={{ color: 'var(--ide-success)' }}>Interactive Terminal Input</p>
+   700→              <ul className="text-xs space-y-2.5" style={{ color: 'var(--ide-text-secondary)' }}>
+   701→                <li className="flex items-start gap-2">
+   702→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>1.</span>
+   703→                  <span>Click <strong style={{ color: 'var(--ide-success)' }}>Run</strong> to start your program</span>
+   704→                </li>
+   705→                <li className="flex items-start gap-2">
+   706→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>2.</span>
+   707→                  <span>The compiler pipeline runs: <span style={{ color: 'var(--ide-warning)' }}>Lexer, Parser, Semantic, IR, Optimize, Security, CodeGen</span></span>
+   708→                </li>
+   709→                <li className="flex items-start gap-2">
+   710→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>3.</span>
+   711→                  <span>Program output appears in the terminal in real-time</span>
+   712→                </li>
+   713→                <li className="flex items-start gap-2">
+   714→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>4.</span>
+   715→                  <span>When the program asks for input, <strong style={{ color: 'var(--ide-warning)' }}>type in the terminal</strong> and press <kbd className="px-1.5 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Enter</kbd></span>
+   716→                </li>
+   717→              </ul>
+   718→            </div>
+   719→            <div className="rounded-md p-3 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+   720→              <p className="text-[11px] font-medium mb-2" style={{ color: 'var(--ide-warning)' }}>Example (Python):</p>
+   721→              <div className="rounded p-2 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--ide-bg-surface)' }}>
+   722→                <div style={{ color: 'var(--ide-text-dim)' }}># Your code:</div>
+   723→                <div><span style={{ color: 'var(--ide-accent)' }}>print</span>(<span style={{ color: 'var(--ide-success)' }}>&quot;Hello, World!&quot;</span>)</div>
+   724→                <div>name = <span style={{ color: 'var(--ide-accent)' }}>input</span>(<span style={{ color: 'var(--ide-success)' }}>&quot;Enter your name: &quot;</span>)</div>
+   725→                <div><span style={{ color: 'var(--ide-accent)' }}>print</span>(<span style={{ color: 'var(--ide-success)' }}>f&quot;Hello, {'{name}'}&quot;</span>)</div>
+   726→              </div>
+   727→              <div className="mt-2 rounded p-2 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--ide-bg-surface)' }}>
+   728→                <div style={{ color: 'var(--ide-text-dim)' }}># Terminal output:</div>
+   729→                <div style={{ color: 'var(--ide-text-dim)' }}>[INFO] Lexical Analysis...</div>
+   730→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Lexical Analysis (8 tokens, 4 LOC)</div>
+   731→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Parsing (12 nodes, 1 functions)</div>
+   732→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Semantic Analysis (3 symbols)</div>
+   733→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   IR Generation (8 instructions)</div>
+   734→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Optimization (8 -&gt; 6 instructions)</div>
+   735→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Security Analysis (risk: low)</div>
+   736→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Code Generation (Native)</div>
+   737→                <div style={{ color: 'var(--ide-text-primary)' }}>Hello, World!</div>
+   738→                <div style={{ color: 'var(--ide-text-primary)' }}>Enter your name: <span style={{ color: 'var(--ide-warning)' }}>yuva</span> <span style={{ color: 'var(--ide-text-dim)' }}>&lt;- type here</span></div>
+   739→                <div style={{ color: 'var(--ide-text-primary)' }}>Hello, yuva!</div>
+   740→              </div>
+   741→            </div>
+   742→            <div className="rounded-md p-3 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+   743→              <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--ide-purple)' }}>Keyboard Shortcuts:</p>
+   744→              <ul className="text-[10px] space-y-1" style={{ color: 'var(--ide-text-secondary)' }}>
+   745→                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Enter</kbd> -- Send input line to the program</li>
+   746→                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Backspace</kbd> -- Delete last character</li>
+   747→                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Ctrl+C</kbd> -- Kill the running program</li>
+   748→              </ul>
+   749→            </div>
+   750→            <Button
+   751→              onClick={() => setIsStdinDialog(false)}
+   752→              className="ide-btn-hover w-full font-medium"
+   753→              style={{ backgroundColor: 'var(--ide-accent)', color: 'var(--ide-bg-base)' }}
+   754→            >
+   755→              Got it!
+   756→            </Button>
+   757→          </div>
+   758→        </DialogContent>
+   759→      </Dialog>
+   760→    </>
+   761→  );
+   762→}
+   763→

@@ -248,18 +248,26 @@ function validatePython(code: string): DiagnosticError[] {
         if (beforeComment.startsWith(stmt) && !beforeComment.endsWith(':')) {
           // Skip if it's a one-liner (e.g., "if x: y" is valid)
           if (stmt === 'else' || stmt === 'try' || stmt === 'finally') {
+            // Point to the end of the keyword (e.g., after "else")
+            const stmtIdx = line.indexOf(stmt.trim());
+            const afterStmt = stmtIdx + stmt.trim().length;
             errors.push({
               line: lineNum,
-              col: trimmed.length,
-              endCol: trimmed.length + 1,
+              col: afterStmt + 1, // 1-based column after the keyword
+              endCol: afterStmt + 2,
               message: `Expected ':' after '${stmt.trim()}' statement`,
               severity: 'error',
             });
           } else if (!beforeComment.includes(':')) {
+            // Point to the end of the condition/expression where ':' is expected
+            const colonPos = beforeComment.length;
+            // Find the actual column in the original line (account for leading whitespace)
+            const leadingWs = line.length - line.trimStart().length;
+            const actualCol = leadingWs + colonPos;
             errors.push({
               line: lineNum,
-              col: trimmed.length,
-              endCol: trimmed.length + 1,
+              col: actualCol,
+              endCol: actualCol + 1,
               message: `Expected ':' after '${stmt.trim()}' statement`,
               severity: 'error',
             });
@@ -287,13 +295,19 @@ function validatePython(code: string): DiagnosticError[] {
     }
 
     // Check for print used without parentheses (Python 3)
-    const printMatch = line.match(/^\s*print\s+[^(]/);
+    const printMatch = line.match(/^(\s*)print\s+[^(/]/);
     if (printMatch && !line.trim().startsWith('#')) {
       const printIdx = line.indexOf('print');
+      // Find the first non-space char after 'print' — that's where '(' should be
+      const afterPrint = printIdx + 5; // length of 'print'
+      let parenShouldBe = afterPrint;
+      while (parenShouldBe < line.length && line[parenShouldBe] === ' ') {
+        parenShouldBe++;
+      }
       errors.push({
         line: lineNum,
-        col: printIdx + 1,
-        endCol: printIdx + 6,
+        col: afterPrint + 1, // 1-based column right after 'print'
+        endCol: Math.min(parenShouldBe + 1, line.length),
         message: 'Missing parentheses in call to \'print\'. Did you mean print(...)?',
         severity: 'error',
       });
@@ -350,10 +364,12 @@ function validateC(code: string): DiagnosticError[] {
         if (!trimmed.match(/\/\//) || trimmed.split('//')[0].trim().length > 0) {
           const stmtPart = trimmed.includes('//') ? trimmed.split('//')[0].trim() : trimmed;
           if (stmtPart.length > 0 && !stmtPart.endsWith(';') && !stmtPart.endsWith('{') && !stmtPart.endsWith('}') && !stmtPart.endsWith(',')) {
+            // Point to the exact position where ';' is missing (end of statement)
+            const stmtEndInLine = line.indexOf(stmtPart) + stmtPart.length;
             errors.push({
               line: lineNum,
-              col: line.length,
-              endCol: line.length + 1,
+              col: stmtEndInLine,
+              endCol: stmtEndInLine + 1,
               message: `Expected ';' at end of statement`,
               severity: 'error',
             });
@@ -368,7 +384,7 @@ function validateC(code: string): DiagnosticError[] {
     errors.push({
       line: 1,
       col: 1,
-      endCol: 2,
+      endCol: 1,
       message: 'Warning: No main() function found',
       severity: 'warning',
     });
@@ -389,10 +405,13 @@ function validateCpp(code: string): DiagnosticError[] {
     // Check for cout/cin without proper includes
     if ((trimmed.includes('cout') || trimmed.includes('cin') || trimmed.includes('endl')) &&
         !code.includes('#include <iostream>')) {
+      // Find the actual token position for precise error marker
+      const tokenMatch = trimmed.match(/(cout|cin|endl)/);
+      const tokenInLine = tokenMatch ? line.indexOf(tokenMatch[1]) : 0;
       errors.push({
         line: lineNum,
-        col: 1,
-        endCol: 2,
+        col: tokenInLine + 1, // 1-based column of the token
+        endCol: tokenInLine + (tokenMatch ? tokenMatch[1].length + 1 : 2),
         message: 'Missing #include <iostream> for cout/cin/endl',
         severity: 'warning',
       });
@@ -401,10 +420,11 @@ function validateCpp(code: string): DiagnosticError[] {
 
     // Check for using namespace std without include
     if (trimmed.includes('using namespace std') && !code.includes('#include <iostream>')) {
+      const nsIdx = line.indexOf('using namespace std');
       errors.push({
         line: lineNum,
-        col: 1,
-        endCol: 2,
+        col: nsIdx + 1,
+        endCol: nsIdx + 20, // length of 'using namespace std'
         message: 'using namespace std without including headers',
         severity: 'warning',
       });
@@ -412,10 +432,11 @@ function validateCpp(code: string): DiagnosticError[] {
 
     // Check for vector without include
     if (trimmed.includes('vector') && !code.includes('#include <vector>') && !code.includes('#include <bits/stdc++.h>')) {
+      const vecIdx = line.indexOf('vector');
       errors.push({
         line: lineNum,
-        col: 1,
-        endCol: 2,
+        col: vecIdx + 1,
+        endCol: vecIdx + 7, // length of 'vector'
         message: 'Missing #include <vector>',
         severity: 'warning',
       });
@@ -424,10 +445,11 @@ function validateCpp(code: string): DiagnosticError[] {
 
     // Check for string without include
     if (trimmed.includes('std::string') && !code.includes('#include <string>') && !code.includes('#include <bits/stdc++.h>')) {
+      const strIdx = line.indexOf('std::string');
       errors.push({
         line: lineNum,
-        col: 1,
-        endCol: 2,
+        col: strIdx + 1,
+        endCol: strIdx + 12, // length of 'std::string'
         message: 'Missing #include <string>',
         severity: 'warning',
       });
@@ -481,10 +503,12 @@ function validateJava(code: string): DiagnosticError[] {
           trimmed.match(/System\.(out|in)\./)) {
         const stmtPart = trimmed.includes('//') ? trimmed.split('//')[0].trim() : trimmed;
         if (stmtPart.length > 0 && !stmtPart.endsWith(';') && !stmtPart.endsWith('{') && !stmtPart.endsWith('}') && !stmtPart.endsWith(',')) {
+          // Point to the exact position where ';' is missing (end of statement)
+          const stmtEndInLine = line.indexOf(stmtPart) + stmtPart.length;
           errors.push({
             line: lineNum,
-            col: line.length,
-            endCol: line.length + 1,
+            col: stmtEndInLine,
+            endCol: stmtEndInLine + 1,
             message: `Expected ';' at end of statement`,
             severity: 'error',
           });
@@ -498,7 +522,7 @@ function validateJava(code: string): DiagnosticError[] {
     errors.push({
       line: 1,
       col: 1,
-      endCol: 2,
+      endCol: 1,
       message: 'Java requires at least one class declaration',
       severity: 'error',
     });
@@ -509,7 +533,7 @@ function validateJava(code: string): DiagnosticError[] {
     errors.push({
       line: 1,
       col: 1,
-      endCol: 2,
+      endCol: 1,
       message: 'Warning: No main() method found',
       severity: 'warning',
     });

@@ -171,10 +171,16 @@ function parsePythonErrors(stderr: string, code: string): Diagnostic[] {
     // Python outputs the source line, then a caret line pointing to the exact column.
     // The caret position tells us the precise column of the error.
     // We detect this by finding a line that consists primarily of spaces and ^ characters.
+    //
+    // IMPORTANT: Python prefixes the source line with 4 spaces of indentation in error
+    // messages. The caret line aligns with this prefixed source line, so the caret column
+    // includes those 4 extra spaces. We subtract 4 to get the correct source column.
     const caretMatch = line.match(/^(\s*)(\^+)/);
     if (caretMatch) {
       // The column is the position of the first ^ (1-based)
-      currentCol = caretMatch[1].length + 1;
+      // Subtract 4 for Python's standard error display indentation prefix
+      const rawCol = caretMatch[1].length + 1;
+      currentCol = Math.max(1, rawCol - 4);
       continue;
     }
 
@@ -341,14 +347,11 @@ function parseNodeErrors(output: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
 
   // Node.js syntax error format:
-  //   [filename]:line
-  //   ... pointer ...
-  //   SyntaxError: Unexpected token ...
-  //
-  // Or:
+  //   /path/to/file.js:line
+  //   source line
+  //   ^^^^^^
   //   SyntaxError: Unexpected token ...
   //       at ...
-  //       ...
 
   let detectedLine = 1;
   let detectedCol = 1;
@@ -357,14 +360,20 @@ function parseNodeErrors(output: string): Diagnostic[] {
   let syntaxErrorMessage = '';
 
   for (const line of lines) {
-    // Match line pointer: "    ^^^^"
-    // or match file:line prefix
+    // Match line pointer: file:line or file:line:col
     const fileLineMatch = line.match(/^(?:\S+):(\d+)(?::(\d+))?/);
     if (fileLineMatch) {
       detectedLine = parseInt(fileLineMatch[1], 10);
       if (fileLineMatch[2]) {
         detectedCol = parseInt(fileLineMatch[2], 10);
       }
+    }
+
+    // Match the caret line: ^^^^ pointing to the exact error position
+    const caretMatch = line.match(/^(\s*)(\^+)/);
+    if (caretMatch) {
+      // The column is the position of the first ^ (1-based)
+      detectedCol = caretMatch[1].length + 1;
     }
 
     // Match SyntaxError line
@@ -375,10 +384,22 @@ function parseNodeErrors(output: string): Diagnostic[] {
   }
 
   if (syntaxErrorMessage) {
+    // Determine end column from caret extent if available
+    const caretLine = lines.find(l => l.match(/^\s*\^+/));
+    let endCol = detectedCol + 1;
+    if (caretLine) {
+      const caretMatch = caretLine.match(/^\s*(\^+)/);
+      if (caretMatch) {
+        endCol = detectedCol + caretMatch[1].length - 1;
+      }
+    }
+
     diagnostics.push({
       message: syntaxErrorMessage,
       line: detectedLine,
       column: detectedCol,
+      endLine: detectedLine,
+      endColumn: endCol,
       severity: 'error',
       source: 'node',
     });

@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Terminal as XTerm, type ILinkProvider, type ILink, type IBufferRange } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { useIDEStore } from '@/store/useIDEStore';
+import { useIDEStore, type ExecutionState } from '@/store/useIDEStore';
 import { sendStdin, killExecution, resizeTerminal } from '@/lib/executor-client';
 import { parseTerminalError, isPotentialErrorLine } from '@/lib/terminal-error-parser';
 import { getEditorInstance } from '@/components/ide/ProblemsPanel';
@@ -287,6 +287,7 @@ export function Terminal() {
     setCurrentRequestId,
     setTerminalWriter,
     settings,
+    executionState,
   } = useIDEStore();
 
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -300,6 +301,51 @@ export function Terminal() {
   // Refs for cleanup of pending async operations (RAF / retry timers)
   const pendingRafsRef = useRef<number[]>([]);
   const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Track the previous execution state to detect transitions to INVALID
+  const prevExecStateRef = useRef<ExecutionState>(executionState);
+  // Track whether we've already shown the stale output warning for the current INVALID period
+  const staleWarningShownRef = useRef(false);
+
+  // ─── Show stale output warning when execution state transitions to INVALID ──
+  // When code was previously executed successfully (SUCCESS/FAILED) and then
+  // the user introduces errors (→ INVALID), write a clear banner to the terminal
+  // indicating that the displayed output is from a previous execution.
+  //
+  // We also show this when transitioning from VALID → INVALID if there was
+  // a previous successful execution (lastExecutionTime is set).
+
+  useEffect(() => {
+    const prevState = prevExecStateRef.current;
+    prevExecStateRef.current = executionState;
+
+    if (executionState === 'INVALID' && !staleWarningShownRef.current && xtermRef.current) {
+      // Show stale warning if:
+      // 1. Transitioning directly from SUCCESS/FAILED to INVALID
+      // 2. Or transitioning from VALID to INVALID AND there was a previous execution
+      const lastExecTime = useIDEStore.getState().lastExecutionTime;
+      const hadPreviousExecution = lastExecTime !== null;
+      const wasDirectlyAfterExecution = prevState === 'SUCCESS' || prevState === 'FAILED';
+
+      if (wasDirectlyAfterExecution || (prevState === 'VALID' && hadPreviousExecution)) {
+        staleWarningShownRef.current = true;
+        const xterm = xtermRef.current;
+        // Write a prominent separator and warning banner
+        xterm.writeln('');
+        xterm.writeln('\x1b[33m\x1b[1m──────────────────────────────────────────────────\x1b[0m');
+        xterm.writeln('\x1b[33m\x1b[1m ⚠ Current code contains errors.\x1b[0m');
+        xterm.writeln('\x1b[33m Output above is from a previous execution.\x1b[0m');
+        xterm.writeln('\x1b[33m No new execution will occur until errors are fixed.\x1b[0m');
+        xterm.writeln('\x1b[33m\x1b[1m──────────────────────────────────────────────────\x1b[0m');
+        xterm.writeln('');
+      }
+    }
+
+    // Reset the stale warning flag when we leave INVALID state
+    if (executionState !== 'INVALID') {
+      staleWarningShownRef.current = false;
+    }
+  }, [executionState]);
 
   // ─── Helper: cancel all pending RAFs and timers ─────────────────────────
 
@@ -700,6 +746,30 @@ export function Terminal() {
             <div className="flex items-center gap-1.5 ml-2">
               <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: 'var(--ide-success)' }} />
               <span className="text-[10px]" style={{ color: 'var(--ide-success)' }}>Running</span>
+            </div>
+          )}
+          {!isExecuting && executionState === 'INVALID' && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--ide-error)' }} />
+              <span className="text-[10px]" style={{ color: 'var(--ide-error)' }}>Errors</span>
+            </div>
+          )}
+          {!isExecuting && executionState === 'VALID' && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--ide-success)' }} />
+              <span className="text-[10px]" style={{ color: 'var(--ide-success)' }}>Ready</span>
+            </div>
+          )}
+          {!isExecuting && executionState === 'SUCCESS' && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--ide-success)' }} />
+              <span className="text-[10px]" style={{ color: 'var(--ide-success)' }}>Ready</span>
+            </div>
+          )}
+          {!isExecuting && executionState === 'FAILED' && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--ide-warning)' }} />
+              <span className="text-[10px]" style={{ color: 'var(--ide-warning)' }}>Failed</span>
             </div>
           )}
         </div>

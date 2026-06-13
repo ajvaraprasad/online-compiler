@@ -45,6 +45,9 @@ export interface Diagnostic {
 // Validation status
 export type ValidationStatus = 'idle' | 'validating' | 'validated';
 
+// Execution state — tracks the full lifecycle of code execution
+export type ExecutionState = 'IDLE' | 'VALID' | 'INVALID' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+
 // AI Chat message
 export interface AIMessage {
   id: string;
@@ -141,6 +144,11 @@ interface IDEState {
   currentRequestId: string | null;
   terminalWriter: TerminalWriter | null;
 
+  // Execution State Machine
+  executionState: ExecutionState;
+  lastExecutionTime: number | null;   // timestamp of last execution end
+  lastExitCode: number | null;        // exit code of last execution
+
   // Compiler Pipeline
   pipelineState: CompilerPipelineState;
 
@@ -196,6 +204,7 @@ interface IDEState {
   setTerminalOpen: (open: boolean) => void;
   setExecuting: (executing: boolean) => void;
   setCurrentRequestId: (id: string | null) => void;
+  setExecutionState: (state: ExecutionState) => void;
 
   // Compiler Pipeline
   updatePipelinePhase: (phase: CompilerPhaseInfo) => void;
@@ -289,6 +298,9 @@ export const useIDEStore = create<IDEState>()(
       isTerminalOpen: true,
       isExecuting: false,
       currentRequestId: null,
+      executionState: 'IDLE',
+      lastExecutionTime: null,
+      lastExitCode: null,
 
       // Compiler Pipeline initial state
       pipelineState: {
@@ -501,6 +513,15 @@ export const useIDEStore = create<IDEState>()(
 
       setCurrentRequestId: (id) => set({ currentRequestId: id }),
 
+      setExecutionState: (state) => set((current) => {
+        const update: Partial<IDEState> = { executionState: state };
+        // Track execution end time
+        if (state === 'SUCCESS' || state === 'FAILED') {
+          update.lastExecutionTime = Date.now();
+        }
+        return update;
+      }),
+
       // ─── Compiler Pipeline Actions ──────────────────────────────────────────────
 
       updatePipelinePhase: (phase) => set(state => {
@@ -611,11 +632,32 @@ export const useIDEStore = create<IDEState>()(
 
       // ─── Diagnostics Actions ────────────────────────────────────────────────────
 
-      setDiagnostics: (diagnostics) => set({ diagnostics, validationStatus: 'validated' }),
+      setDiagnostics: (diagnostics) => set((state) => {
+        const hasErrors = diagnostics.some(d => d.severity === 'error');
+        // Update execution state based on diagnostic results
+        let newExecState = state.executionState;
+        if (state.executionState !== 'RUNNING') {
+          if (hasErrors) {
+            newExecState = 'INVALID';
+          } else if (state.executionState === 'INVALID') {
+            // Code was invalid, now it's clean → VALID
+            newExecState = 'VALID';
+          } else if (state.executionState === 'IDLE' || state.executionState === 'VALID') {
+            // Stay in current state or transition to VALID
+            newExecState = diagnostics.length === 0 ? 'VALID' : state.executionState;
+          }
+          // SUCCESS/FAILED states persist until user edits or re-runs
+        }
+        return {
+          diagnostics,
+          validationStatus: 'validated',
+          executionState: newExecState,
+        };
+      }),
       setValidationStatus: (status) => set({ validationStatus: status }),
       setProblemsPanelOpen: (open) => set({ isProblemsPanelOpen: open }),
       toggleProblemsPanel: () => set(state => ({ isProblemsPanelOpen: !state.isProblemsPanelOpen })),
-      clearDiagnostics: () => set({ diagnostics: [], validationStatus: 'idle' }),
+      clearDiagnostics: () => set({ diagnostics: [], validationStatus: 'idle', executionState: 'IDLE' }),
 
       // ─── Settings Actions ────────────────────────────────────────────────────────
 
