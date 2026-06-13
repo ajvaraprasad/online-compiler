@@ -121,3 +121,25 @@ Stage Summary:
 - Reduced motion support via prefers-reduced-motion media query
 - All 10 IDE components updated with interaction classes
 - Verified working in browser with agent-browser snapshot and cursor checks
+
+---
+Task ID: deploy
+Agent: Main Agent
+Task: Deploy the CodeForge IDE application
+
+Work Log:
+- Found dev server was not running (process had died)
+- Cleaned up stale .next/dev/lock files and port bindings
+- Diagnosed server instability: 1024MB memory limit was too aggressive, causing OOM-style crashes in sandbox
+- Reduced memory limit from 1024MB to 512MB in package.json dev script
+- Used double-fork technique (subshell background) to make server process persist across Bash sessions
+- Server now runs stably on port 3000 with WebSocket terminal service on port 3002
+- Full browser verification performed with agent-browser
+
+Stage Summary:
+- Server running: http://localhost:3000 (Next.js) + ws://localhost:3002 (Terminal WS)
+- All IDE components verified: Activity Bar, Sidebar, Toolbar, Monaco Editor, Terminal, Status Bar
+- Core interactivity confirmed: Run button executes code, sidebar view switching works, tabs work
+- Layout verified: full viewport, sticky footer status bar, no blank areas, no JS errors
+- Non-blocking warning: WebSocket reconnection during initial load (self-resolves)
+- Package.json updated: NODE_OPTIONS reduced from 1024MB to 512MB for sandbox stability
