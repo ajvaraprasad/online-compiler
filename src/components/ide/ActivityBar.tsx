@@ -7,7 +7,6 @@ import {
   Search,
   Settings,
   Sparkles,
-  User,
   LogIn,
   LogOut,
 } from 'lucide-react';
@@ -25,16 +24,21 @@ const ACTIVITY_ITEMS: Array<{
 }> = [
   { id: 'files', icon: Files, label: 'Explorer' },
   { id: 'search', icon: Search, label: 'Search' },
-  { id: 'ai', icon: Sparkles, label: 'AI Assistant' },
   { id: 'settings', icon: Settings, label: 'Settings' },
 ];
 
 export function ActivityBar() {
-  const { sidebarView, setSidebarView, isAuthenticated, user, openAuthModal, logout } = useIDEStore();
+  const { sidebarView, setSidebarView, isAuthenticated, user, openAuthModal, logout, isAIPanelOpen, toggleAIPanel } = useIDEStore();
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="w-12 bg-[#11111b] flex flex-col items-center py-2 border-r border-[#313244]">
+      <div
+        className="w-12 flex flex-col items-center py-2 border-r"
+        style={{
+          backgroundColor: 'var(--ide-bg-activitybar)',
+          borderColor: 'var(--ide-border)',
+        }}
+      >
         {/* Top section: sidebar views */}
         <div className="flex flex-col items-center gap-1">
           {ACTIVITY_ITEMS.map((item) => {
@@ -50,23 +54,49 @@ export function ActivityBar() {
                       w-10 h-10 flex items-center justify-center rounded-md
                       transition-colors duration-150 relative
                       ${isActive
-                        ? 'text-[#cdd6f4] bg-[#1e1e2e]'
-                        : 'text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#1e1e2e]/50'
+                        ? 'text-[var(--ide-text-primary)] bg-[var(--ide-bg-tab-active)]'
+                        : 'text-[var(--ide-text-dim)] hover:text-[var(--ide-text-primary)] hover:bg-[var(--ide-bg-hover)]/50'
                       }
                     `}
                   >
                     {isActive && (
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-[#89b4fa] rounded-r" />
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r" style={{ backgroundColor: 'var(--ide-accent)' }} />
                     )}
                     <Icon className="h-5 w-5" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right" className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4]">
+                <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                   {item.label}
                 </TooltipContent>
               </Tooltip>
             );
           })}
+
+          {/* AI Assistant — RHS panel toggle */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={toggleAIPanel}
+                className={`
+                  ide-activity-btn
+                  w-10 h-10 flex items-center justify-center rounded-md
+                  transition-colors duration-150 relative
+                  ${isAIPanelOpen
+                    ? 'text-[var(--ide-purple)] bg-[var(--ide-bg-tab-active)]'
+                    : 'text-[var(--ide-text-dim)] hover:text-[var(--ide-purple)] hover:bg-[var(--ide-bg-hover)]/50'
+                  }
+                `}
+              >
+                {isAIPanelOpen && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r" style={{ backgroundColor: 'var(--ide-purple)' }} />
+                )}
+                <Sparkles className="h-5 w-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+              AI Assistant
+            </TooltipContent>
+          </Tooltip>
         </div>
 
         {/* Spacer */}
@@ -78,13 +108,13 @@ export function ActivityBar() {
             <>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md text-[#a6e3a1] hover:bg-[#1e1e2e]/50 transition-colors">
-                    <div className="w-6 h-6 rounded-full bg-[#a6e3a1] text-[#1e1e2e] flex items-center justify-center text-xs font-bold">
+                  <button className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md hover:bg-[var(--ide-bg-hover)]/50 transition-colors">
+                    <div className="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center" style={{ backgroundColor: 'var(--ide-success)', color: 'var(--ide-bg-base)' }}>
                       {user?.username?.[0]?.toUpperCase() || 'U'}
                     </div>
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right" className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4]">
+                <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                   {user?.username}
                 </TooltipContent>
               </Tooltip>
@@ -92,12 +122,15 @@ export function ActivityBar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={logout}
-                    className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md text-[#6c7086] hover:text-[#f38ba8] hover:bg-[#1e1e2e]/50 transition-colors"
+                    className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md transition-colors"
+                    style={{ color: 'var(--ide-text-dim)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-error)'}
+                    onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
                   >
                     <LogOut className="h-5 w-5" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right" className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4]">
+                <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                   Sign Out
                 </TooltipContent>
               </Tooltip>
@@ -107,12 +140,15 @@ export function ActivityBar() {
               <TooltipTrigger asChild>
                 <button
                   onClick={() => openAuthModal('login')}
-                  className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md text-[#6c7086] hover:text-[#89b4fa] hover:bg-[#1e1e2e]/50 transition-colors"
+                  className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md transition-colors"
+                  style={{ color: 'var(--ide-text-dim)' }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-accent)'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
                 >
                   <LogIn className="h-5 w-5" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right" className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4]">
+              <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                 Sign In
               </TooltipContent>
             </Tooltip>

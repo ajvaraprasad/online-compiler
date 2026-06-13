@@ -599,3 +599,90 @@ textarea:focus {
     scroll-behavior: auto !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CodeForge — IDE Theme Variables (Dark & Light)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.ide-root {
+  /* Dark theme (default) */
+  --ide-bg-base: #1e1e2e;
+  --ide-bg-surface: #181825;
+  --ide-bg-overlay: #11111b;
+  --ide-bg-hover: #313244;
+  --ide-bg-active: #45475a;
+  --ide-bg-toolbar: #181825;
+  --ide-bg-activitybar: #11111b;
+  --ide-bg-statusbar: #181825;
+  --ide-bg-terminal: #1e1e1e;
+  --ide-bg-terminal-header: #3c3c3c;
+  --ide-bg-input: #11111b;
+  --ide-bg-tab-active: #1e1e2e;
+  --ide-bg-tab-inactive: #181825;
+
+  --ide-border: #313244;
+  --ide-border-light: #45475a;
+
+  --ide-text-primary: #cdd6f4;
+  --ide-text-secondary: #bac2de;
+  --ide-text-muted: #a6adc8;
+  --ide-text-dim: #6c7086;
+  --ide-text-faint: #585b70;
+
+  --ide-accent: #89b4fa;
+  --ide-accent-hover: #74c7ec;
+  --ide-success: #a6e3a1;
+  --ide-warning: #f9e2af;
+  --ide-error: #f38ba8;
+  --ide-purple: #cba6f7;
+
+  --ide-scrollbar-thumb: #45475a;
+  --ide-scrollbar-thumb-hover: #585b70;
+
+  --ide-selection: #45475a;
+  --ide-focus-ring: #89b4fa;
+}
+
+/* Light theme overrides */
+.ide-root.ide-light {
+  --ide-bg-base: #ffffff;
+  --ide-bg-surface: #f3f4f6;
+  --ide-bg-overlay: #e5e7eb;
+  --ide-bg-hover: #d1d5db;
+  --ide-bg-active: #9ca3af;
+  --ide-bg-toolbar: #f3f4f6;
+  --ide-bg-activitybar: #e5e7eb;
+  --ide-bg-statusbar: #f3f4f6;
+  --ide-bg-terminal: #1e1e1e;
+  --ide-bg-terminal-header: #d1d5db;
+  --ide-bg-input: #ffffff;
+  --ide-bg-tab-active: #ffffff;
+  --ide-bg-tab-inactive: #f3f4f6;
+
+  --ide-border: #d1d5db;
+  --ide-border-light: #9ca3af;
+
+  --ide-text-primary: #1f2937;
+  --ide-text-secondary: #374151;
+  --ide-text-muted: #4b5563;
+  --ide-text-dim: #6b7280;
+  --ide-text-faint: #9ca3af;
+
+  --ide-accent: #3b82f6;
+  --ide-accent-hover: #2563eb;
+  --ide-success: #10b981;
+  --ide-warning: #f59e0b;
+  --ide-error: #ef4444;
+  --ide-purple: #8b5cf6;
+
+  --ide-scrollbar-thumb: #d1d5db;
+  --ide-scrollbar-thumb-hover: #9ca3af;
+
+  --ide-selection: #bfdbfe;
+  --ide-focus-ring: #3b82f6;
+}
+
+/* Light theme Monaco editor — light variant */
+.ide-root.ide-light .monaco-editor .error-line-highlight {
+  background-color: rgba(239, 68, 68, 0.08) !important;
+}

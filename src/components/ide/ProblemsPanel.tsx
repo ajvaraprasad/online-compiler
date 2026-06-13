@@ -164,11 +164,11 @@ export function ProblemsPanel() {
     return (
       <div
         className="shrink-0 border-t"
-        style={{ backgroundColor: '#3c3c3c', borderColor: '#252526' }}
+        style={{ backgroundColor: 'var(--ide-bg-terminal-header)', borderColor: 'var(--ide-border)' }}
       >
         <div className="flex items-center justify-between px-3 h-7">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold tracking-wide" style={{ color: '#bbbbbb' }}>
+            <span className="text-[11px] font-semibold tracking-wide" style={{ color: 'var(--ide-text-muted)' }}>
               PROBLEMS
             </span>
             <CountBadge count={errors.length} color="#f38ba8" bgColor="#f38ba820" />
@@ -180,7 +180,8 @@ export function ProblemsPanel() {
           <Button
             variant="ghost"
             size="icon"
-            className="ide-icon-btn h-5 w-5 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-icon-btn h-5 w-5"
+            style={{ color: 'var(--ide-text-dim)' }}
             onClick={toggleProblemsPanel}
           >
             <ChevronUp className="h-3 w-3" />
@@ -194,18 +195,18 @@ export function ProblemsPanel() {
     <div
       className="shrink-0 flex flex-col border-t"
       style={{
-        backgroundColor: '#1e1e1e',
-        borderColor: '#252526',
+        backgroundColor: 'var(--ide-bg-terminal)',
+        borderColor: 'var(--ide-border)',
         maxHeight: '150px',
       }}
     >
       {/* Header bar */}
       <div
         className="flex items-center justify-between px-3 h-7 shrink-0 border-b"
-        style={{ backgroundColor: '#3c3c3c', borderColor: '#252526' }}
+        style={{ backgroundColor: 'var(--ide-bg-terminal-header)', borderColor: 'var(--ide-border)' }}
       >
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold tracking-wide" style={{ color: '#bbbbbb' }}>
+          <span className="text-[11px] font-semibold tracking-wide" style={{ color: 'var(--ide-text-muted)' }}>
             PROBLEMS
           </span>
           <CountBadge count={errors.length} color="#f38ba8" bgColor="#f38ba820" />
@@ -217,7 +218,8 @@ export function ProblemsPanel() {
         <Button
           variant="ghost"
           size="icon"
-          className="ide-icon-btn h-5 w-5 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+          className="ide-icon-btn h-5 w-5"
+          style={{ color: 'var(--ide-text-dim)' }}
           onClick={toggleProblemsPanel}
         >
           <ChevronDown className="h-3 w-3" />

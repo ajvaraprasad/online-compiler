@@ -11,6 +11,7 @@ import { Terminal } from './Terminal';
 import { ProblemsPanel } from './ProblemsPanel';
 import { StatusBar } from './StatusBar';
 import { AuthModal } from './AuthModal';
+import { AIAssistant } from './AIAssistant';
 import { filesAPI, LANGUAGE_EXTENSIONS, DEFAULT_CODE } from '@/lib/api';
 import { useSocket } from '@/hooks/useSocket';
 import { connectWS, disconnectWS } from '@/lib/executor-client';
@@ -27,6 +28,8 @@ export function IDELayout() {
     setRemoteFiles,
     tabs,
     addTab,
+    theme,
+    isAIPanelOpen,
   } = useIDEStore();
 
   const { isConnected } = useSocket();
@@ -45,6 +48,18 @@ export function IDELayout() {
       addTab('main.py', 'python', DEFAULT_CODE.python);
     }
   }, []);
+
+  // Apply theme class to root element
+  useEffect(() => {
+    const root = document.querySelector('.ide-root');
+    if (root) {
+      if (theme === 'light') {
+        root.classList.add('ide-light');
+      } else {
+        root.classList.remove('ide-light');
+      }
+    }
+  }, [theme]);
 
   const handleSave = useCallback(async () => {
     const state = useIDEStore.getState();
@@ -110,7 +125,7 @@ export function IDELayout() {
   }, [isTerminalOpen, activeTabId, isExecuting, handleSave]);
 
   return (
-    <div className="ide-root h-screen w-screen flex flex-col bg-[#1e1e2e] overflow-hidden">
+    <div className="ide-root h-screen w-screen flex flex-col overflow-hidden" style={{ backgroundColor: 'var(--ide-bg-base)' }}>
       <Toolbar />
 
       <div className="flex-1 flex overflow-hidden">
@@ -126,6 +141,19 @@ export function IDELayout() {
             <Terminal />
           </div>
         </div>
+
+        {/* RHS AI Assistant Panel — like VS Code Copilot */}
+        {isAIPanelOpen && (
+          <div
+            className="w-80 border-l flex flex-col overflow-hidden shrink-0"
+            style={{
+              backgroundColor: 'var(--ide-bg-surface)',
+              borderColor: 'var(--ide-border)',
+            }}
+          >
+            <AIAssistant />
+          </div>
+        )}
       </div>
 
       <StatusBar isConnected={isConnected} />

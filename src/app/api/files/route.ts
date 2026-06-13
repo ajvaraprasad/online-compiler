@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, language, content } = body;
+    const { name, language, content, folderId } = body;
 
     if (!name || !language) {
       return NextResponse.json(
@@ -49,11 +49,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate folderId if provided
+    if (folderId) {
+      const folder = await db.folder.findFirst({
+        where: { id: folderId, userId: authUser.userId },
+      });
+      if (!folder) {
+        return NextResponse.json(
+          { error: 'Folder not found' },
+          { status: 404 }
+        );
+      }
+    }
+
     const file = await db.codeFile.create({
       data: {
         name,
         language,
         content: content || '',
+        folderId: folderId || null,
         userId: authUser.userId,
       },
     });
@@ -80,7 +94,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, name, language, content } = body;
+    const { id, name, language, content, folderId } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -107,10 +121,11 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const updateData: { name?: string; language?: string; content?: string } = {};
+    const updateData: { name?: string; language?: string; content?: string; folderId?: string | null } = {};
     if (name !== undefined) updateData.name = name;
     if (language !== undefined) updateData.language = language;
     if (content !== undefined) updateData.content = content;
+    if (folderId !== undefined) updateData.folderId = folderId || null;
 
     const file = await db.codeFile.update({
       where: { id },

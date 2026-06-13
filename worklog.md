@@ -143,3 +143,34 @@ Stage Summary:
 - Layout verified: full viewport, sticky footer status bar, no blank areas, no JS errors
 - Non-blocking warning: WebSocket reconnection during initial load (self-resolves)
 - Package.json updated: NODE_OPTIONS reduced from 1024MB to 512MB for sandbox stability
+
+---
+Task ID: features-batch-1
+Agent: Main Agent
+Task: Implement 4 major features: theme toggle, AI RHS panel, remove duplicate save, folder system
+
+Work Log:
+- Updated Zustand store with RHS panel state, folder tree types, and theme actions
+- Added CSS custom properties for IDE theme variables (dark + light) in globals.css
+- Fixed theme toggle: Added ide-light class toggle in IDELayout, Monaco theme switching in CodeEditor
+- Updated ALL IDE components (Toolbar, ActivityBar, Sidebar, EditorTabs, StatusBar, Terminal, ProblemsPanel, AIAssistant, CodeEditor) to use CSS variables instead of hardcoded hex colors
+- Moved AI Assistant from left sidebar to RHS panel (320px wide, toggleable via Sparkles icon)
+- Updated ActivityBar: AI button now toggles RHS panel instead of sidebar view
+- Removed duplicate Save button from Sidebar header
+- Implemented full folder system:
+  - Added Folder model to Prisma schema with self-referencing tree structure
+  - Added folderId to CodeFile model
+  - Created /api/folders API routes (GET, POST, PUT, DELETE) with circular reference prevention
+  - Updated /api/files to handle folderId
+  - Added foldersAPI to frontend API client
+  - Built recursive folder tree renderer in Sidebar
+  - Added context actions: New Folder, New File in folder, Rename, Delete
+  - Local folder/file creation works without authentication
+- Fixed unauthenticated sidebar: shows local tabs and local folders in tree with sign-in prompt
+- Browser verified all 4 features working correctly
+
+Stage Summary:
+- Theme toggle: ALL UI sections (toolbar, sidebar, tabs, status bar, terminal header, problems panel) switch between dark/light. Monaco editor also switches. Terminal body stays dark (correct).
+- AI Assistant: Opens as RHS panel via Sparkles icon, independent of left sidebar
+- Duplicate save: Removed from sidebar, only one in toolbar
+- Folder system: Full CRUD with tree UI, works without auth (local) and with auth (server-side)

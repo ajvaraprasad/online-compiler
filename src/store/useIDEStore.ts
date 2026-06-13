@@ -20,7 +20,7 @@ export interface TabInfo {
   isRemote: boolean; // true if saved to server
 }
 
-export type SidebarView = 'files' | 'search' | 'ai' | 'settings' | 'none';
+export type SidebarView = 'files' | 'search' | 'settings' | 'none';
 
 // Diagnostic from validation
 export interface Diagnostic {
@@ -63,6 +63,27 @@ export interface CompilerPipelineState {
   metrics: Record<string, unknown> | null;
 }
 
+// ─── File Tree Types ─────────────────────────────────────────────────────────
+
+export interface FolderItem {
+  id: string;
+  name: string;
+  parentId: string | null;
+  isExpanded: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Extended remote file type with folderId
+export interface FileItem {
+  id: string;
+  name: string;
+  language: string;
+  content: string;
+  folderId: string | null;
+  updatedAt: string;
+}
+
 // ─── Store State ─────────────────────────────────────────────────────────────
 
 interface IDEState {
@@ -93,8 +114,12 @@ interface IDEState {
   isSidebarOpen: boolean;
   theme: 'dark' | 'light';
 
+  // RHS Panel (AI Assistant)
+  isAIPanelOpen: boolean;
+
   // File management
-  remoteFiles: Array<{ id: string; name: string; language: string; content: string; updatedAt: string }>;
+  remoteFiles: FileItem[];
+  folders: FolderItem[];
 
   // AI Assistant
   aiMessages: AIMessage[];
@@ -139,11 +164,20 @@ interface IDEState {
   setSidebarView: (view: SidebarView) => void;
   toggleSidebar: () => void;
   setTheme: (theme: 'dark' | 'light') => void;
+  toggleAIPanel: () => void;
+  setAIPanelOpen: (open: boolean) => void;
 
   // File management
-  setRemoteFiles: (files: IDEState['remoteFiles']) => void;
-  updateRemoteFile: (id: string, data: Partial<{ name: string; language: string; content: string }>) => void;
+  setRemoteFiles: (files: FileItem[]) => void;
+  updateRemoteFile: (id: string, data: Partial<{ name: string; language: string; content: string; folderId: string | null }>) => void;
   removeRemoteFile: (id: string) => void;
+
+  // Folder management
+  setFolders: (folders: FolderItem[]) => void;
+  addFolder: (folder: FolderItem) => void;
+  updateFolder: (id: string, data: Partial<{ name: string; parentId: string | null; isExpanded: boolean }>) => void;
+  removeFolder: (id: string) => void;
+  toggleFolderExpanded: (id: string) => void;
 
   // AI Assistant
   addAIMessage: (role: 'user' | 'assistant', content: string) => void;
@@ -200,9 +234,11 @@ export const useIDEStore = create<IDEState>((set, get) => ({
   sidebarView: 'files',
   isSidebarOpen: true,
   theme: 'dark',
+  isAIPanelOpen: false,
 
   // Remote files
   remoteFiles: [],
+  folders: [],
 
   // AI Assistant initial state
   aiMessages: [],
@@ -236,6 +272,7 @@ export const useIDEStore = create<IDEState>((set, get) => ({
       token: null,
       isAuthenticated: false,
       remoteFiles: [],
+      folders: [],
     });
   },
 
@@ -391,11 +428,14 @@ export const useIDEStore = create<IDEState>((set, get) => ({
 
   // ─── UI Actions ──────────────────────────────────────────────────────────────
 
-  setSidebarView: (view) => set({ sidebarView: view }),
+  setSidebarView: (view) => set({ sidebarView: view, isSidebarOpen: true }),
 
   toggleSidebar: () => set(state => ({ isSidebarOpen: !state.isSidebarOpen })),
 
   setTheme: (theme) => set({ theme }),
+
+  toggleAIPanel: () => set(state => ({ isAIPanelOpen: !state.isAIPanelOpen })),
+  setAIPanelOpen: (open) => set({ isAIPanelOpen: open }),
 
   // ─── File Management Actions ─────────────────────────────────────────────────
 
@@ -409,6 +449,30 @@ export const useIDEStore = create<IDEState>((set, get) => ({
 
   removeRemoteFile: (id) => set(state => ({
     remoteFiles: state.remoteFiles.filter(f => f.id !== id),
+  })),
+
+  // ─── Folder Management Actions ───────────────────────────────────────────────
+
+  setFolders: (folders) => set({ folders }),
+
+  addFolder: (folder) => set(state => ({
+    folders: [...state.folders, folder],
+  })),
+
+  updateFolder: (id, data) => set(state => ({
+    folders: state.folders.map(f =>
+      f.id === id ? { ...f, ...data } : f
+    ),
+  })),
+
+  removeFolder: (id) => set(state => ({
+    folders: state.folders.filter(f => f.id !== id),
+  })),
+
+  toggleFolderExpanded: (id) => set(state => ({
+    folders: state.folders.map(f =>
+      f.id === id ? { ...f, isExpanded: !f.isExpanded } : f
+    ),
   })),
 
   // ─── AI Assistant Actions ──────────────────────────────────────────────────

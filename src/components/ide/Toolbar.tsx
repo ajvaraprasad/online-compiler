@@ -492,14 +492,14 @@ export function Toolbar() {
 
   return (
     <>
-      <div className="h-10 bg-[#181825] border-b border-[#313244] flex items-center justify-between px-3 shrink-0">
+      <div className="h-10 border-b flex items-center justify-between px-3 shrink-0" style={{ backgroundColor: 'var(--ide-bg-toolbar)', borderColor: 'var(--ide-border)' }}>
         {/* Left section - Logo and file actions */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 mr-3">
             <div className="w-5 h-5 rounded bg-gradient-to-br from-[#89b4fa] to-[#cba6f7] flex items-center justify-center">
               <span className="text-[10px] font-bold text-[#1e1e2e]">CF</span>
             </div>
-            <span className="text-xs font-semibold text-[#cdd6f4] hidden sm:inline">CodeForge</span>
+            <span className="text-xs font-semibold hidden sm:inline" style={{ color: 'var(--ide-text-primary)' }}>CodeForge</span>
           </div>
 
           <TooltipProvider>
@@ -508,13 +508,14 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7"
+                  style={{ color: 'var(--ide-text-dim)' }}
                   onClick={handleNewFile}
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
+              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                 New File
               </TooltipContent>
             </Tooltip>
@@ -524,14 +525,15 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7"
+                  style={{ color: 'var(--ide-text-dim)' }}
                   onClick={handleSave}
                   disabled={!activeTab || isSaving}
                 >
                   {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
+              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                 Save (Ctrl+S)
               </TooltipContent>
             </Tooltip>
@@ -541,12 +543,12 @@ export function Toolbar() {
         {/* Center section - Language selector and run controls */}
         <div className="flex items-center gap-2">
           <Select value={language} onValueChange={handleLanguageChange}>
-            <SelectTrigger className="h-7 w-[130px] bg-[#11111b] border-[#313244] text-[#cdd6f4] text-xs">
+            <SelectTrigger className="h-7 w-[130px] text-xs" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#1e1e2e] border-[#313244]">
+            <SelectContent style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)' }}>
               {Object.entries(LANGUAGE_NAMES).map(([key, name]) => (
-                <SelectItem key={key} value={key} className="text-[#cdd6f4] focus:bg-[#313244] focus:text-[#cdd6f4] text-xs">
+                <SelectItem key={key} value={key} className="text-xs" style={{ color: 'var(--ide-text-primary)' }}>
                   {name}
                 </SelectItem>
               ))}
@@ -559,13 +561,14 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-[10px] text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="h-7 text-[10px]"
+                  style={{ color: 'var(--ide-text-dim)' }}
                   onClick={() => setIsStdinDialog(true)}
                 >
                   INPUT
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
+              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                 How to Provide Input
               </TooltipContent>
             </Tooltip>
@@ -574,7 +577,8 @@ export function Toolbar() {
           {isExecuting ? (
             <Button
               size="sm"
-              className="ide-btn-hover h-7 bg-[#f38ba8] hover:bg-[#eba0ac] text-[#1e1e2e] text-xs font-medium gap-1.5 px-3"
+              className="ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3"
+              style={{ backgroundColor: 'var(--ide-error)', color: 'var(--ide-bg-base)' }}
               onClick={handleStop}
             >
               <Square className="h-3 w-3 fill-current" />
@@ -584,11 +588,8 @@ export function Toolbar() {
             <div className="flex items-center gap-1">
               <Button
                 size="sm"
-                className={`ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3 ${
-                  errorCount > 0
-                    ? 'bg-[#f9e2af] hover:bg-[#f5c2d7] text-[#1e1e2e]'
-                    : 'bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e]'
-                }`}
+                className="ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3"
+                style={{ backgroundColor: errorCount > 0 ? 'var(--ide-warning)' : 'var(--ide-success)', color: 'var(--ide-bg-base)' }}
                 onClick={handleRun}
                 disabled={!activeTab}
               >
@@ -599,7 +600,7 @@ export function Toolbar() {
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="ide-status-item flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-sm bg-[#f38ba820]"
+                      <div className="ide-status-item flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-sm" style={{ backgroundColor: 'var(--ide-error)', opacity: 0.15 }}
                         onClick={() => {
                           // Navigate to first error
                           const firstError = diagnostics.find(d => d.severity === 'error');
@@ -613,11 +614,11 @@ export function Toolbar() {
                           }
                         }}
                       >
-                        <AlertCircle className="h-3 w-3" style={{ color: '#f38ba8' }} />
-                        <span className="text-[9px] font-bold ml-0.5" style={{ color: '#f38ba8' }}>{errorCount}</span>
+                        <AlertCircle className="h-3 w-3" style={{ color: 'var(--ide-error)' }} />
+                        <span className="text-[9px] font-bold ml-0.5" style={{ color: 'var(--ide-error)' }}>{errorCount}</span>
                       </div>
                     </TooltipTrigger>
-                    <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
+                    <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                       {errorCount} error{errorCount > 1 ? 's' : ''} — click to jump to first
                     </TooltipContent>
                   </Tooltip>
@@ -628,7 +629,7 @@ export function Toolbar() {
 
           {/* Current compiler phase indicator */}
           {isExecuting && currentPhaseDisplay && (
-            <span className="text-[10px] text-[#f9e2af] animate-pulse hidden sm:inline">
+            <span className="text-[10px] animate-pulse hidden sm:inline" style={{ color: 'var(--ide-warning)' }}>
               {currentPhaseDisplay}...
             </span>
           )}
@@ -642,14 +643,15 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7"
+                  style={{ color: 'var(--ide-text-dim)' }}
                   onClick={handleDownload}
                   disabled={!activeTab}
                 >
                   <Download className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
+              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                 Download File
               </TooltipContent>
             </Tooltip>
@@ -659,13 +661,14 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7"
+                  style={{ color: 'var(--ide-text-dim)' }}
                   onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 >
                   {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
+              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
                 Toggle Theme
               </TooltipContent>
             </Tooltip>
@@ -675,69 +678,70 @@ export function Toolbar() {
 
       {/* Stdin Help Dialog */}
       <Dialog open={isStdinDialog} onOpenChange={setIsStdinDialog}>
-        <DialogContent className="sm:max-w-[500px] bg-[#1e1e2e] border-[#313244] text-[#cdd6f4]">
+        <DialogContent className="sm:max-w-[500px]" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
           <DialogHeader>
-            <DialogTitle className="text-[#cdd6f4]">How to Provide Input</DialogTitle>
-            <DialogDescription className="text-[#a6adc8]">
+            <DialogTitle style={{ color: 'var(--ide-text-primary)' }}>How to Provide Input</DialogTitle>
+            <DialogDescription style={{ color: 'var(--ide-text-secondary)' }}>
               Type directly in the terminal while your program is running
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
-            <div className="bg-[#11111b] rounded-md p-4 border border-[#313244]">
-              <p className="text-sm text-[#a6e3a1] font-medium mb-3">Interactive Terminal Input</p>
-              <ul className="text-xs text-[#bac2de] space-y-2.5">
+            <div className="rounded-md p-4 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+              <p className="text-sm font-medium mb-3" style={{ color: 'var(--ide-success)' }}>Interactive Terminal Input</p>
+              <ul className="text-xs space-y-2.5" style={{ color: 'var(--ide-text-secondary)' }}>
                 <li className="flex items-start gap-2">
-                  <span className="text-[#89b4fa] font-bold shrink-0">1.</span>
-                  <span>Click <strong className="text-[#a6e3a1]">Run</strong> to start your program</span>
+                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>1.</span>
+                  <span>Click <strong style={{ color: 'var(--ide-success)' }}>Run</strong> to start your program</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <span className="text-[#89b4fa] font-bold shrink-0">2.</span>
-                  <span>The compiler pipeline runs: <span className="text-[#f9e2af]">Lexer, Parser, Semantic, IR, Optimize, Security, CodeGen</span></span>
+                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>2.</span>
+                  <span>The compiler pipeline runs: <span style={{ color: 'var(--ide-warning)' }}>Lexer, Parser, Semantic, IR, Optimize, Security, CodeGen</span></span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <span className="text-[#89b4fa] font-bold shrink-0">3.</span>
+                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>3.</span>
                   <span>Program output appears in the terminal in real-time</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <span className="text-[#89b4fa] font-bold shrink-0">4.</span>
-                  <span>When the program asks for input, <strong className="text-[#f9e2af]">type in the terminal</strong> and press <kbd className="px-1.5 py-0.5 bg-[#313244] rounded text-[10px]">Enter</kbd></span>
+                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>4.</span>
+                  <span>When the program asks for input, <strong style={{ color: 'var(--ide-warning)' }}>type in the terminal</strong> and press <kbd className="px-1.5 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Enter</kbd></span>
                 </li>
               </ul>
             </div>
-            <div className="bg-[#11111b] rounded-md p-3 border border-[#313244]">
-              <p className="text-[11px] text-[#f9e2af] font-medium mb-2">Example (Python):</p>
-              <div className="bg-[#181825] rounded p-2 font-mono text-[11px] leading-relaxed">
-                <div className="text-[#6c7086]"># Your code:</div>
-                <div><span className="text-[#89b4fa]">print</span>(<span className="text-[#a6e3a1]">&quot;Hello, World!&quot;</span>)</div>
-                <div>name = <span className="text-[#89b4fa]">input</span>(<span className="text-[#a6e3a1]">&quot;Enter your name: &quot;</span>)</div>
-                <div><span className="text-[#89b4fa]">print</span>(<span className="text-[#a6e3a1]">f&quot;Hello, {'{name}'}&quot;</span>)</div>
+            <div className="rounded-md p-3 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+              <p className="text-[11px] font-medium mb-2" style={{ color: 'var(--ide-warning)' }}>Example (Python):</p>
+              <div className="rounded p-2 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--ide-bg-surface)' }}>
+                <div style={{ color: 'var(--ide-text-dim)' }}># Your code:</div>
+                <div><span style={{ color: 'var(--ide-accent)' }}>print</span>(<span style={{ color: 'var(--ide-success)' }}>&quot;Hello, World!&quot;</span>)</div>
+                <div>name = <span style={{ color: 'var(--ide-accent)' }}>input</span>(<span style={{ color: 'var(--ide-success)' }}>&quot;Enter your name: &quot;</span>)</div>
+                <div><span style={{ color: 'var(--ide-accent)' }}>print</span>(<span style={{ color: 'var(--ide-success)' }}>f&quot;Hello, {'{name}'}&quot;</span>)</div>
               </div>
-              <div className="mt-2 bg-[#181825] rounded p-2 font-mono text-[11px] leading-relaxed">
-                <div className="text-[#6c7086]"># Terminal output:</div>
-                <div className="text-[#6c7086]">[INFO] Lexical Analysis...</div>
-                <div className="text-[#6c7086]">[OK]   Lexical Analysis (8 tokens, 4 LOC)</div>
-                <div className="text-[#6c7086]">[OK]   Parsing (12 nodes, 1 functions)</div>
-                <div className="text-[#6c7086]">[OK]   Semantic Analysis (3 symbols)</div>
-                <div className="text-[#6c7086]">[OK]   IR Generation (8 instructions)</div>
-                <div className="text-[#6c7086]">[OK]   Optimization (8 -&gt; 6 instructions)</div>
-                <div className="text-[#6c7086]">[OK]   Security Analysis (risk: low)</div>
-                <div className="text-[#6c7086]">[OK]   Code Generation (Native)</div>
-                <div className="text-[#cdd6f4]">Hello, World!</div>
-                <div className="text-[#cdd6f4]">Enter your name: <span className="text-[#f9e2af]">yuva</span> <span className="text-[#6c7086]">&lt;- type here</span></div>
-                <div className="text-[#cdd6f4]">Hello, yuva!</div>
+              <div className="mt-2 rounded p-2 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--ide-bg-surface)' }}>
+                <div style={{ color: 'var(--ide-text-dim)' }}># Terminal output:</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[INFO] Lexical Analysis...</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Lexical Analysis (8 tokens, 4 LOC)</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Parsing (12 nodes, 1 functions)</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Semantic Analysis (3 symbols)</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   IR Generation (8 instructions)</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Optimization (8 -&gt; 6 instructions)</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Security Analysis (risk: low)</div>
+                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Code Generation (Native)</div>
+                <div style={{ color: 'var(--ide-text-primary)' }}>Hello, World!</div>
+                <div style={{ color: 'var(--ide-text-primary)' }}>Enter your name: <span style={{ color: 'var(--ide-warning)' }}>yuva</span> <span style={{ color: 'var(--ide-text-dim)' }}>&lt;- type here</span></div>
+                <div style={{ color: 'var(--ide-text-primary)' }}>Hello, yuva!</div>
               </div>
             </div>
-            <div className="bg-[#11111b] rounded-md p-3 border border-[#313244]">
-              <p className="text-[11px] text-[#94e2d5] font-medium mb-1.5">Keyboard Shortcuts:</p>
-              <ul className="text-[10px] text-[#a6adc8] space-y-1">
-                <li><kbd className="px-1 py-0.5 bg-[#313244] rounded text-[10px]">Enter</kbd> -- Send input line to the program</li>
-                <li><kbd className="px-1 py-0.5 bg-[#313244] rounded text-[10px]">Backspace</kbd> -- Delete last character</li>
-                <li><kbd className="px-1 py-0.5 bg-[#313244] rounded text-[10px]">Ctrl+C</kbd> -- Kill the running program</li>
+            <div className="rounded-md p-3 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+              <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--ide-purple)' }}>Keyboard Shortcuts:</p>
+              <ul className="text-[10px] space-y-1" style={{ color: 'var(--ide-text-secondary)' }}>
+                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Enter</kbd> -- Send input line to the program</li>
+                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Backspace</kbd> -- Delete last character</li>
+                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Ctrl+C</kbd> -- Kill the running program</li>
               </ul>
             </div>
             <Button
               onClick={() => setIsStdinDialog(false)}
-              className="ide-btn-hover w-full bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] font-medium"
+              className="ide-btn-hover w-full font-medium"
+              style={{ backgroundColor: 'var(--ide-accent)', color: 'var(--ide-bg-base)' }}
             >
               Got it!
             </Button>

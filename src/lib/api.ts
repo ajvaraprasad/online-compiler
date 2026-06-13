@@ -92,10 +92,10 @@ export const filesAPI = {
     return res.json();
   },
 
-  create: async (name: string, language: string, content?: string) => {
+  create: async (name: string, language: string, content?: string, folderId?: string | null) => {
     const res = await apiRequest('/files', {
       method: 'POST',
-      body: JSON.stringify({ name, language, content }),
+      body: JSON.stringify({ name, language, content, folderId: folderId || null }),
     });
     if (!res.ok) {
       const data = await res.json();
@@ -104,7 +104,7 @@ export const filesAPI = {
     return res.json();
   },
 
-  update: async (id: string, data: { name?: string; language?: string; content?: string }) => {
+  update: async (id: string, data: { name?: string; language?: string; content?: string; folderId?: string | null }) => {
     const res = await apiRequest('/files', {
       method: 'PUT',
       body: JSON.stringify({ id, ...data }),
@@ -124,6 +124,51 @@ export const filesAPI = {
     if (!res.ok) {
       const data = await res.json();
       throw new Error(data.error || 'Failed to delete file');
+    }
+    return res.json();
+  },
+};
+
+// Folders API
+export const foldersAPI = {
+  list: async () => {
+    const res = await apiRequest('/folders');
+    if (!res.ok) throw new Error('Failed to fetch folders');
+    return res.json();
+  },
+
+  create: async (name: string, parentId?: string | null) => {
+    const res = await apiRequest('/folders', {
+      method: 'POST',
+      body: JSON.stringify({ name, parentId: parentId || null }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Failed to create folder');
+    }
+    return res.json();
+  },
+
+  update: async (id: string, data: { name?: string; parentId?: string | null }) => {
+    const res = await apiRequest('/folders', {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...data }),
+    });
+    if (!res.ok) {
+      const data2 = await res.json();
+      throw new Error(data2.error || 'Failed to update folder');
+    }
+    return res.json();
+  },
+
+  delete: async (id: string) => {
+    const res = await apiRequest('/folders', {
+      method: 'DELETE',
+      body: JSON.stringify({ id }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Failed to delete folder');
     }
     return res.json();
   },

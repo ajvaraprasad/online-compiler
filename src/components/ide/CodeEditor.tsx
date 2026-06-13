@@ -88,7 +88,7 @@ function diagnosticsToMarkers(diagnostics: Diagnostic[], monaco: any): any[] {
 export function CodeEditor() {
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
-  const { tabs, activeTabId, language, updateTabContent, setDiagnostics, setValidationStatus } = useIDEStore();
+  const { tabs, activeTabId, language, updateTabContent, setDiagnostics, setValidationStatus, theme } = useIDEStore();
   const activeTab = tabs.find(t => t.id === activeTabId);
 
   // ─── Apply diagnostics to Monaco editor + update store ────────────────
@@ -283,7 +283,12 @@ export function CodeEditor() {
       },
     });
 
-    monaco.editor.setTheme('codeforge-dark');
+    const currentTheme = useIDEStore.getState().theme;
+    if (currentTheme === 'light') {
+      monaco.editor.setTheme('vs');
+    } else {
+      monaco.editor.setTheme('codeforge-dark');
+    }
 
     // ─── Initial Validation ─────────────────────────────────────────────────
     const model = editor.getModel();
@@ -306,6 +311,18 @@ export function CodeEditor() {
       updateTabContent(activeTabId, value);
     }
   }, [activeTabId, updateTabContent]);
+
+  // Switch Monaco editor theme when IDE theme changes
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (monaco) {
+      if (theme === 'light') {
+        monaco.editor.setTheme('vs');
+      } else {
+        monaco.editor.setTheme('codeforge-dark');
+      }
+    }
+  }, [theme]);
 
   // Re-validate when language changes
   useEffect(() => {
@@ -344,11 +361,11 @@ export function CodeEditor() {
 
   if (!activeTab) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[#1e1e2e]">
+      <div className="flex-1 flex items-center justify-center" style={{ backgroundColor: 'var(--ide-bg-base)' }}>
         <div className="text-center space-y-4">
-          <div className="text-6xl font-bold text-[#313244]">{'<>'}</div>
-          <h2 className="text-xl text-[#6c7086]">CodeForge IDE</h2>
-          <p className="text-sm text-[#585b70]">
+          <div className="text-6xl font-bold" style={{ color: 'var(--ide-text-faint)' }}>{'<>'}</div>
+          <h2 className="text-xl" style={{ color: 'var(--ide-text-dim)' }}>CodeForge IDE</h2>
+          <p className="text-sm" style={{ color: 'var(--ide-text-faint)' }}>
             Create a new file or open an existing one to start coding
           </p>
           <div className="flex gap-3 justify-center mt-6">
@@ -360,7 +377,10 @@ export function CodeEditor() {
                   const ext = lang === 'python' ? '.py' : lang === 'javascript' ? '.js' : lang === 'cpp' ? '.cpp' : lang === 'c' ? '.c' : '.java';
                   addTab(`main${ext}`, lang, DEFAULT_CODE[lang]);
                 }}
-                className="ide-lang-btn px-3 py-1.5 bg-[#313244] text-[#cdd6f4] text-xs rounded-md hover:bg-[#45475a] border border-[#45475a]"
+                className="ide-lang-btn px-3 py-1.5 text-xs rounded-md border"
+                style={{ backgroundColor: 'var(--ide-bg-hover)', color: 'var(--ide-text-primary)', borderColor: 'var(--ide-border-light)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--ide-bg-active)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--ide-bg-hover)'; }}
               >
                 {lang.charAt(0).toUpperCase() + lang.slice(1)}
               </button>
@@ -381,7 +401,7 @@ export function CodeEditor() {
         value={activeTab.content}
         onChange={handleEditorChange}
         onMount={handleEditorMount}
-        theme="codeforge-dark"
+        theme={theme === 'light' ? 'vs' : 'codeforge-dark'}
         options={{
           fontSize: 14,
           fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
@@ -398,8 +418,8 @@ export function CodeEditor() {
           automaticLayout: true,
         }}
         loading={
-          <div className="flex items-center justify-center h-full bg-[#1e1e2e]">
-            <div className="text-[#6c7086] text-sm">Loading editor...</div>
+          <div className="flex items-center justify-center h-full" style={{ backgroundColor: 'var(--ide-bg-base)' }}>
+            <div className="text-sm" style={{ color: 'var(--ide-text-dim)' }}>Loading editor...</div>
           </div>
         }
       />

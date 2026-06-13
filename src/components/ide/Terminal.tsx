@@ -616,7 +616,7 @@ export function Terminal() {
 
   return (
     <div
-      className={`bg-[#1e1e1e] flex flex-col ${
+      className={`flex flex-col ${
         isMaximized && isTerminalOpen ? 'absolute inset-x-0 bottom-0 top-10 z-50' : ''
       }`}
       style={{
@@ -629,7 +629,8 @@ export function Terminal() {
         ...(isTerminalOpen
           ? {
               height: isMaximized ? undefined : '16rem',  // h-64 = 16rem
-              borderTop: '1px solid #252526',
+              backgroundColor: 'var(--ide-bg-terminal)',
+              borderTop: '1px solid var(--ide-border)',
               cursor: 'default',
             }
           : {
@@ -643,14 +644,17 @@ export function Terminal() {
       }}
     >
       {/* Terminal Header — VS Code style */}
-      <div className="flex items-center justify-between px-3 py-1 bg-[#3c3c3c] border-b border-[#252526] shrink-0">
+      <div
+        className="flex items-center justify-between px-3 py-1 border-b shrink-0"
+        style={{ backgroundColor: 'var(--ide-bg-terminal-header)', borderColor: 'var(--ide-border)' }}
+      >
         <div className="flex items-center gap-2">
-          <TerminalIcon className="h-3.5 w-3.5 text-[#d4d4d4]" />
-          <span className="text-xs font-medium text-[#cccccc]">Terminal</span>
+          <TerminalIcon className="h-3.5 w-3.5" style={{ color: 'var(--ide-text-primary)' }} />
+          <span className="text-xs font-medium" style={{ color: 'var(--ide-text-primary)' }}>Terminal</span>
           {isExecuting && (
             <div className="flex items-center gap-1.5 ml-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-[#6a9955] animate-pulse" />
-              <span className="text-[10px] text-[#6a9955]">Running</span>
+              <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: 'var(--ide-success)' }} />
+              <span className="text-[10px]" style={{ color: 'var(--ide-success)' }}>Running</span>
             </div>
           )}
         </div>
@@ -658,7 +662,8 @@ export function Terminal() {
           <Button
             variant="ghost"
             size="icon"
-            className="ide-terminal-btn h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-terminal-btn h-6 w-6"
+            style={{ color: 'var(--ide-text-muted)' }}
             onClick={handleClear}
           >
             <Trash2 className="h-3 w-3" />
@@ -666,7 +671,8 @@ export function Terminal() {
           <Button
             variant="ghost"
             size="icon"
-            className="ide-terminal-btn h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-terminal-btn h-6 w-6"
+            style={{ color: 'var(--ide-text-muted)' }}
             onClick={() => setIsMaximized(!isMaximized)}
           >
             {isMaximized ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
@@ -674,7 +680,8 @@ export function Terminal() {
           <Button
             variant="ghost"
             size="icon"
-            className="ide-terminal-btn h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-terminal-btn h-6 w-6"
+            style={{ color: 'var(--ide-text-muted)' }}
             onClick={() => setTerminalOpen(false)}
           >
             <X className="h-3 w-3" />

@@ -18,7 +18,10 @@ export function EditorTabs() {
   if (tabs.length === 0) return null;
 
   return (
-    <div className="flex bg-[#11111b] border-b border-[#313244] overflow-x-auto custom-scrollbar-x">
+    <div
+      className="flex border-b overflow-x-auto custom-scrollbar-x"
+      style={{ backgroundColor: 'var(--ide-bg-tab-inactive)', borderColor: 'var(--ide-border)' }}
+    >
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         const color = LANGUAGE_COLORS[tab.language] || '#6c7086';
@@ -28,19 +31,33 @@ export function EditorTabs() {
             key={tab.id}
             className={`
               ide-tab
-              flex items-center gap-1.5 px-3 py-1.5 border-r border-[#313244]
-              select-none min-w-0 max-w-[180px] group
-              ${isActive
-                ? 'bg-[#1e1e2e] text-[#cdd6f4] border-t-2 border-t-[#89b4fa]'
-                : 'bg-[#181825] text-[#6c7086] hover:bg-[#1e1e2e] hover:text-[#bac2de] border-t-2 border-t-transparent'
-              }
+              flex items-center gap-1.5 px-3 py-1.5 border-r border-t-2 select-none min-w-0 max-w-[180px] group
+              ${isActive ? 'border-t-transparent' : 'border-t-transparent'}
             `}
+            style={{
+              backgroundColor: isActive ? 'var(--ide-bg-tab-active)' : 'var(--ide-bg-tab-inactive)',
+              color: isActive ? 'var(--ide-text-primary)' : 'var(--ide-text-dim)',
+              borderRightColor: 'var(--ide-border)',
+              borderTopColor: isActive ? 'var(--ide-accent)' : 'transparent',
+            }}
             onClick={() => setActiveTab(tab.id)}
+            onMouseEnter={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.backgroundColor = 'var(--ide-bg-tab-active)';
+                e.currentTarget.style.color = 'var(--ide-text-secondary)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive) {
+                e.currentTarget.style.backgroundColor = 'var(--ide-bg-tab-inactive)';
+                e.currentTarget.style.color = 'var(--ide-text-dim)';
+              }
+            }}
           >
             <FileCode className="h-3.5 w-3.5 shrink-0" style={{ color }} />
             <span className="truncate text-xs">{tab.name}</span>
             {tab.isDirty && (
-              <div className="w-2 h-2 rounded-full bg-[#f9e2af] shrink-0" />
+              <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: 'var(--ide-warning)' }} />
             )}
             <button
               className={`
