@@ -194,7 +194,7 @@ export function Sidebar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-6 w-6 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
                   onClick={handleNewFile}
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -209,7 +209,7 @@ export function Sidebar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-6 w-6 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
                   onClick={handleSaveFile}
                   disabled={isSaving}
                 >
@@ -226,7 +226,7 @@ export function Sidebar() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                    className="ide-icon-btn h-6 w-6 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
                     onClick={loadRemoteFiles}
                     disabled={isLoading}
                   >
@@ -251,7 +251,7 @@ export function Sidebar() {
               <div>
                 <button
                   onClick={() => setIsExpanded(!isExpanded)}
-                  className="w-full flex items-center gap-1 px-2 py-1.5 text-[#a6adc8] hover:bg-[#313244]/50 text-xs font-medium"
+                  className="ide-file-item w-full flex items-center gap-1 px-2 py-1.5 text-[#a6adc8] text-xs font-medium"
                 >
                   {isExpanded ? (
                     <ChevronDown className="h-3.5 w-3.5" />
@@ -276,8 +276,8 @@ export function Sidebar() {
                           onClick={() => handleOpenRemoteFile(file)}
                           onKeyDown={(e) => { if (e.key === 'Enter') handleOpenRemoteFile(file); }}
                           className={`
-                            w-full flex items-center gap-2 px-3 py-1.5 text-sm
-                            hover:bg-[#313244]/50 transition-colors group cursor-pointer
+                            ide-file-item
+                            w-full flex items-center gap-2 px-3 py-1.5 text-sm group
                             ${activeTabId === file.id ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#bac2de]'}
                           `}
                         >
@@ -286,7 +286,7 @@ export function Sidebar() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-5 w-5 opacity-0 group-hover:opacity-100 text-[#6c7086] hover:text-[#f38ba8]"
+                            className="ide-icon-btn h-5 w-5 opacity-0 group-hover:opacity-100 text-[#6c7086] hover:text-[#f38ba8]"
                             onClick={(e) => handleDeleteFile(file.id, e)}
                           >
                             <Trash2 className="h-3 w-3" />
@@ -304,7 +304,7 @@ export function Sidebar() {
                 </p>
                 <Button
                   size="sm"
-                  className="bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] text-xs"
+                  className="ide-btn-hover bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] text-xs"
                   onClick={() => openAuthModal('login')}
                 >
                   Sign In
@@ -374,7 +374,7 @@ export function Sidebar() {
             </div>
             <Button
               onClick={handleCreateFile}
-              className="w-full bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e] font-medium"
+              className="ide-btn-hover w-full bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e] font-medium"
               disabled={!newFileName.trim()}
             >
               Create File

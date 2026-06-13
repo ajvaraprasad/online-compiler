@@ -46,6 +46,7 @@ export function ActivityBar() {
                   <button
                     onClick={() => setSidebarView(item.id)}
                     className={`
+                      ide-activity-btn
                       w-10 h-10 flex items-center justify-center rounded-md
                       transition-colors duration-150 relative
                       ${isActive
@@ -77,7 +78,7 @@ export function ActivityBar() {
             <>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button className="w-10 h-10 flex items-center justify-center rounded-md text-[#a6e3a1] hover:bg-[#1e1e2e]/50 transition-colors">
+                  <button className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md text-[#a6e3a1] hover:bg-[#1e1e2e]/50 transition-colors">
                     <div className="w-6 h-6 rounded-full bg-[#a6e3a1] text-[#1e1e2e] flex items-center justify-center text-xs font-bold">
                       {user?.username?.[0]?.toUpperCase() || 'U'}
                     </div>
@@ -91,7 +92,7 @@ export function ActivityBar() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={logout}
-                    className="w-10 h-10 flex items-center justify-center rounded-md text-[#6c7086] hover:text-[#f38ba8] hover:bg-[#1e1e2e]/50 transition-colors"
+                    className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md text-[#6c7086] hover:text-[#f38ba8] hover:bg-[#1e1e2e]/50 transition-colors"
                   >
                     <LogOut className="h-5 w-5" />
                   </button>
@@ -106,7 +107,7 @@ export function ActivityBar() {
               <TooltipTrigger asChild>
                 <button
                   onClick={() => openAuthModal('login')}
-                  className="w-10 h-10 flex items-center justify-center rounded-md text-[#6c7086] hover:text-[#89b4fa] hover:bg-[#1e1e2e]/50 transition-colors"
+                  className="ide-activity-btn w-10 h-10 flex items-center justify-center rounded-md text-[#6c7086] hover:text-[#89b4fa] hover:bg-[#1e1e2e]/50 transition-colors"
                 >
                   <LogIn className="h-5 w-5" />
                 </button>

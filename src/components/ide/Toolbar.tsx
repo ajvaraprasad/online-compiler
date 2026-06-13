@@ -508,7 +508,7 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
                   onClick={handleNewFile}
                 >
                   <Plus className="h-4 w-4" />
@@ -524,7 +524,7 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
                   onClick={handleSave}
                   disabled={!activeTab || isSaving}
                 >
@@ -574,7 +574,7 @@ export function Toolbar() {
           {isExecuting ? (
             <Button
               size="sm"
-              className="h-7 bg-[#f38ba8] hover:bg-[#eba0ac] text-[#1e1e2e] text-xs font-medium gap-1.5 px-3"
+              className="ide-btn-hover h-7 bg-[#f38ba8] hover:bg-[#eba0ac] text-[#1e1e2e] text-xs font-medium gap-1.5 px-3"
               onClick={handleStop}
             >
               <Square className="h-3 w-3 fill-current" />
@@ -584,7 +584,7 @@ export function Toolbar() {
             <div className="flex items-center gap-1">
               <Button
                 size="sm"
-                className={`h-7 text-xs font-medium gap-1.5 px-3 ${
+                className={`ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3 ${
                   errorCount > 0
                     ? 'bg-[#f9e2af] hover:bg-[#f5c2d7] text-[#1e1e2e]'
                     : 'bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e]'
@@ -599,7 +599,7 @@ export function Toolbar() {
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-sm bg-[#f38ba820] cursor-pointer"
+                      <div className="ide-status-item flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-sm bg-[#f38ba820]"
                         onClick={() => {
                           // Navigate to first error
                           const firstError = diagnostics.find(d => d.severity === 'error');
@@ -642,7 +642,7 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
                   onClick={handleDownload}
                   disabled={!activeTab}
                 >
@@ -659,7 +659,7 @@ export function Toolbar() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
+                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
                   onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                 >
                   {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -737,7 +737,7 @@ export function Toolbar() {
             </div>
             <Button
               onClick={() => setIsStdinDialog(false)}
-              className="w-full bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] font-medium"
+              className="ide-btn-hover w-full bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] font-medium"
             >
               Got it!
             </Button>

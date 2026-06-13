@@ -630,6 +630,7 @@ export function Terminal() {
           ? {
               height: isMaximized ? undefined : '16rem',  // h-64 = 16rem
               borderTop: '1px solid #252526',
+              cursor: 'default',
             }
           : {
               height: 0,
@@ -637,6 +638,7 @@ export function Terminal() {
               overflow: 'hidden',
               visibility: 'hidden' as const,
               borderTop: 'none',
+              cursor: 'default',
             }),
       }}
     >
@@ -656,7 +658,7 @@ export function Terminal() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-terminal-btn h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
             onClick={handleClear}
           >
             <Trash2 className="h-3 w-3" />
@@ -664,7 +666,7 @@ export function Terminal() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-terminal-btn h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
             onClick={() => setIsMaximized(!isMaximized)}
           >
             {isMaximized ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
@@ -672,7 +674,7 @@ export function Terminal() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-terminal-btn h-6 w-6 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
             onClick={() => setTerminalOpen(false)}
           >
             <X className="h-3 w-3" />
@@ -683,7 +685,7 @@ export function Terminal() {
       {/* xterm.js Container — always in DOM, visibility-hidden when terminal is closed */}
       <div
         ref={terminalRef}
-        className="flex-1 overflow-hidden"
+        className="ide-terminal-area flex-1 overflow-hidden"
         style={{ minHeight: 0 }}
         onClick={() => xtermRef.current?.focus()}
       />

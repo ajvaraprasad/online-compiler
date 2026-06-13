@@ -105,7 +105,7 @@ function DiagnosticItem({
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      className="flex items-center gap-2 px-3 py-1 cursor-pointer transition-colors"
+      className="ide-diagnostic-item flex items-center gap-2 px-3 py-1"
       style={{
         backgroundColor: isSelected ? '#094771' : 'transparent',
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
@@ -180,7 +180,7 @@ export function ProblemsPanel() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-5 w-5 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+            className="ide-icon-btn h-5 w-5 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
             onClick={toggleProblemsPanel}
           >
             <ChevronUp className="h-3 w-3" />
@@ -217,7 +217,7 @@ export function ProblemsPanel() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-5 w-5 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
+          className="ide-icon-btn h-5 w-5 text-[#999999] hover:text-[#ffffff] hover:bg-[#505050]/50"
           onClick={toggleProblemsPanel}
         >
           <ChevronDown className="h-3 w-3" />
@@ -268,7 +268,7 @@ export function ProblemsPanel() {
           <div>
             {/* File group header */}
             <button
-              className="flex items-center gap-1.5 w-full px-2 py-1 text-left hover:bg-[#2a2d2e] transition-colors"
+              className="ide-file-item flex items-center gap-1.5 w-full px-2 py-1 text-left"
               onClick={() => setIsFileGroupExpanded(!isFileGroupExpanded)}
               aria-expanded={isFileGroupExpanded}
               aria-label={`Toggle ${fileName} diagnostics`}

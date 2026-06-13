@@ -27,9 +27,9 @@ export function EditorTabs() {
           <div
             key={tab.id}
             className={`
+              ide-tab
               flex items-center gap-1.5 px-3 py-1.5 border-r border-[#313244]
-              cursor-pointer select-none min-w-0 max-w-[180px] group
-              transition-colors duration-100
+              select-none min-w-0 max-w-[180px] group
               ${isActive
                 ? 'bg-[#1e1e2e] text-[#cdd6f4] border-t-2 border-t-[#89b4fa]'
                 : 'bg-[#181825] text-[#6c7086] hover:bg-[#1e1e2e] hover:text-[#bac2de] border-t-2 border-t-transparent'
@@ -44,9 +44,9 @@ export function EditorTabs() {
             )}
             <button
               className={`
+                ide-tab-close
                 shrink-0 ml-1 rounded-sm p-0.5
                 opacity-0 group-hover:opacity-100
-                hover:bg-[#45475a] transition-all
                 ${isActive ? 'opacity-100' : ''}
               `}
               onClick={(e) => {

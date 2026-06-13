@@ -137,7 +137,7 @@ export function AuthModal() {
                   />
                 </div>
               </div>
-              <Button type="submit" className="w-full bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] font-medium" disabled={isLoading}>
+              <Button type="submit" className="ide-btn-hover w-full bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] font-medium" disabled={isLoading}>
                 {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Sign In
               </Button>
@@ -212,7 +212,7 @@ export function AuthModal() {
                   />
                 </div>
               </div>
-              <Button type="submit" className="w-full bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e] font-medium" disabled={isLoading}>
+              <Button type="submit" className="ide-btn-hover w-full bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e] font-medium" disabled={isLoading}>
                 {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Create Account
               </Button>

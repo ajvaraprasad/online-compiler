@@ -57,7 +57,7 @@ export function StatusBar({ isConnected }: StatusBarProps) {
         <div className="flex items-center gap-2">
           {errorCount > 0 ? (
             <div
-              className="flex items-center gap-1 cursor-pointer hover:opacity-80"
+              className="ide-status-item flex items-center gap-1"
               onClick={() => {
                 // Navigate to first error
                 const firstError = diagnostics.find(d => d.severity === 'error');
@@ -73,7 +73,7 @@ export function StatusBar({ isConnected }: StatusBarProps) {
           ) : null}
           {warningCount > 0 ? (
             <div
-              className="flex items-center gap-1 cursor-pointer hover:opacity-80"
+              className="ide-status-item flex items-center gap-1"
               onClick={() => {
                 const { toggleProblemsPanel } = useIDEStore.getState();
                 toggleProblemsPanel();

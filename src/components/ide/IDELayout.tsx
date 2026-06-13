@@ -44,7 +44,7 @@ export function IDELayout() {
     if (tabs.length === 0) {
       addTab('main.py', 'python', DEFAULT_CODE.python);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSave = useCallback(async () => {
     const state = useIDEStore.getState();
@@ -110,7 +110,7 @@ export function IDELayout() {
   }, [isTerminalOpen, activeTabId, isExecuting, handleSave]);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#1e1e2e] overflow-hidden">
+    <div className="ide-root h-screen w-screen flex flex-col bg-[#1e1e2e] overflow-hidden">
       <Toolbar />
 
       <div className="flex-1 flex overflow-hidden">

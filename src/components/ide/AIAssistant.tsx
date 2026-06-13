@@ -52,7 +52,7 @@ function renderAIContent(content: string) {
           <span>{lang}</span>
           <button
             onClick={() => navigator.clipboard?.writeText(code)}
-            className="text-[#6c7086] hover:text-[#cdd6f4] transition-colors text-xs"
+            className="ide-copy-btn text-[#6c7086] hover:text-[#cdd6f4] text-xs"
           >
             Copy
           </button>
@@ -392,7 +392,7 @@ export function AIAssistant() {
         {aiMessages.length > 0 && (
           <button
             onClick={handleClear}
-            className="text-[#6c7086] hover:text-[#f38ba8] transition-colors"
+            className="ide-icon-btn text-[#6c7086] hover:text-[#f38ba8] transition-colors"
             title="Clear chat"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -411,11 +411,11 @@ export function AIAssistant() {
                 onClick={() => handleQuickAction(qa.action, qa.label)}
                 disabled={isAILoading}
                 className={`
+                  ide-quick-action
                   flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs
                   bg-[#313244] text-[#cdd6f4] border border-[#313244]
                   hover:bg-[#45475a] hover:border-[#585b70]
                   disabled:opacity-50 disabled:cursor-not-allowed
-                  transition-colors duration-150
                 `}
               >
                 <Icon className="h-3 w-3" />
@@ -475,11 +475,11 @@ export function AIAssistant() {
             type="submit"
             disabled={isAILoading || !inputValue.trim()}
             className={`
+              ide-btn-hover
               w-8 h-8 flex items-center justify-center rounded-md
               bg-[#89b4fa] text-[#1e1e2e]
               hover:bg-[#74c7ec]
               disabled:opacity-50 disabled:cursor-not-allowed
-              transition-colors duration-150
             `}
           >
             {isAILoading ? (

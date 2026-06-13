@@ -360,7 +360,7 @@ export function CodeEditor() {
                   const ext = lang === 'python' ? '.py' : lang === 'javascript' ? '.js' : lang === 'cpp' ? '.cpp' : lang === 'c' ? '.c' : '.java';
                   addTab(`main${ext}`, lang, DEFAULT_CODE[lang]);
                 }}
-                className="px-3 py-1.5 bg-[#313244] text-[#cdd6f4] text-xs rounded-md hover:bg-[#45475a] transition-colors border border-[#45475a]"
+                className="ide-lang-btn px-3 py-1.5 bg-[#313244] text-[#cdd6f4] text-xs rounded-md hover:bg-[#45475a] border border-[#45475a]"
               >
                 {lang.charAt(0).toUpperCase() + lang.slice(1)}
               </button>

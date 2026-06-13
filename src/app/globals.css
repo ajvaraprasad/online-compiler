@@ -220,3 +220,382 @@
 [data-radix-popper-content-wrapper] {
   z-index: 9999 !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CodeForge — Cursor Identity & Mouse Interaction System
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Comprehensive cursor and interaction styling for a professional,
+   desktop-grade user experience. All animations use GPU-accelerated
+   properties (transform, opacity) for 60fps performance.
+
+   Cursor Map:
+   - Default areas          → arrow (default)
+   - Buttons, links, tabs   → pointer
+   - Text input, editors    → text (I-beam)
+   - Terminal area          → text (I-beam)
+   - Disabled controls      → not-allowed
+   - Resizable panels       → appropriate resize cursors
+   - Drag handles           → grab / grabbing
+   - Loading states         → wait / progress
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Global Cursor Defaults ─────────────────────────────────────────────── */
+/* The IDE root uses default arrow cursor. Children override as needed. */
+.ide-root {
+  cursor: default;
+}
+
+/* ─── Pointer Cursor — Clickable Elements ─────────────────────────────────── */
+/* All interactive elements that trigger an action on click */
+.ide-pointer,
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+a,
+select,
+[role="tab"],
+[role="menuitem"],
+[role="option"],
+[role="combobox"],
+[data-slot="select-trigger"],
+[data-slot="tooltip-trigger"],
+.clickable {
+  cursor: pointer !important;
+}
+
+/* ─── Text Cursor — Text Input & Editing Areas ────────────────────────────── */
+/* Areas where the user types or edits text */
+.ide-text-cursor,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+textarea,
+[contenteditable="true"],
+.monaco-editor .cursor,
+.monaco-editor .view-lines,
+.xterm-helper-textarea {
+  cursor: text !important;
+}
+
+/* ─── Not-Allowed Cursor — Disabled Elements ──────────────────────────────── */
+/* Disabled buttons, inputs, and interactive elements */
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+[aria-disabled="true"],
+[disabled],
+.opacity-50[class*="disabled"] {
+  cursor: not-allowed !important;
+}
+
+/* ─── Wait Cursor — Loading/Processing States ─────────────────────────────── */
+.ide-wait,
+[data-loading="true"] {
+  cursor: wait !important;
+}
+
+/* ─── Grab Cursors — Drag & Drop ──────────────────────────────────────────── */
+.ide-grab {
+  cursor: grab !important;
+}
+.ide-grab:active,
+.ide-grabbing {
+  cursor: grabbing !important;
+}
+
+/* ─── Resize Cursors ──────────────────────────────────────────────────────── */
+.ide-resize-ew  { cursor: ew-resize !important; }
+.ide-resize-ns  { cursor: ns-resize !important; }
+.ide-resize-nwse { cursor: nwse-resize !important; }
+.ide-resize-nesw { cursor: nesw-resize !important; }
+.ide-resize-col { cursor: col-resize !important; }
+.ide-resize-row { cursor: row-resize !important; }
+
+/* ─── Button Interaction Feedback System ──────────────────────────────────── */
+/* GPU-accelerated hover/active/disabled transitions for all IDE buttons */
+
+/* Base button transition — applies to all buttons in the IDE */
+button:not(:disabled) {
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease,
+    transform 100ms ease;
+}
+
+/* Hover: subtle scale-up for prominent buttons */
+.ide-btn-hover:hover:not(:disabled) {
+  transform: translateY(-0.5px);
+}
+
+/* Active: press-down feedback */
+.ide-btn-hover:active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.98);
+}
+
+/* Focus: visible ring for keyboard navigation */
+button:focus-visible,
+[role="button"]:focus-visible,
+a:focus-visible,
+select:focus-visible {
+  outline: 2px solid #89b4fa;
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* ─── Interactive Element Hover Glow ──────────────────────────────────────── */
+/* Subtle luminous feedback on hover for icon buttons in the IDE */
+.ide-icon-btn {
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 100ms ease;
+}
+
+.ide-icon-btn:hover:not(:disabled) {
+  transform: scale(1.08);
+}
+
+.ide-icon-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* ─── Tab Hover Effect ────────────────────────────────────────────────────── */
+.ide-tab {
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.ide-tab:hover {
+  background-color: rgba(30, 30, 46, 0.8);
+}
+
+.ide-tab-close {
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    opacity 120ms ease,
+    transform 100ms ease;
+}
+
+.ide-tab-close:hover {
+  background-color: #45475a;
+  transform: scale(1.15);
+}
+
+.ide-tab-close:active {
+  transform: scale(0.9);
+}
+
+/* ─── Sidebar File Item Hover ─────────────────────────────────────────────── */
+.ide-file-item {
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.ide-file-item:hover {
+  background-color: rgba(49, 50, 68, 0.5);
+}
+
+.ide-file-item:active {
+  background-color: rgba(49, 50, 68, 0.8);
+}
+
+/* ─── Activity Bar Button ─────────────────────────────────────────────────── */
+.ide-activity-btn {
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 100ms ease;
+  position: relative;
+}
+
+.ide-activity-btn:hover:not(:disabled) {
+  background-color: rgba(30, 30, 46, 0.5);
+  transform: scale(1.05);
+}
+
+.ide-activity-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* ─── Diagnostic Item Hover ───────────────────────────────────────────────── */
+.ide-diagnostic-item {
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.ide-diagnostic-item:hover {
+  background-color: #2a2d2e;
+}
+
+/* ─── Quick Action Button (AI Assistant) ──────────────────────────────────── */
+.ide-quick-action {
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 100ms ease,
+    box-shadow 150ms ease;
+}
+
+.ide-quick-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.ide-quick-action:active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.97);
+  box-shadow: none;
+}
+
+/* ─── Status Bar Interactive Items ────────────────────────────────────────── */
+.ide-status-item {
+  cursor: pointer;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.ide-status-item:hover {
+  opacity: 0.85;
+  background-color: rgba(49, 50, 68, 0.5);
+  border-radius: 3px;
+}
+
+/* ─── Terminal Header Buttons ─────────────────────────────────────────────── */
+.ide-terminal-btn {
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    transform 100ms ease;
+}
+
+.ide-terminal-btn:hover:not(:disabled) {
+  color: #ffffff;
+  background-color: rgba(80, 80, 80, 0.5);
+  transform: scale(1.1);
+}
+
+.ide-terminal-btn:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+/* ─── Terminal Area Cursor ────────────────────────────────────────────────── */
+/* The xterm container uses text cursor for interactive typing */
+.ide-terminal-area {
+  cursor: text;
+}
+
+/* ─── Welcome Screen Language Buttons ─────────────────────────────────────── */
+.ide-lang-btn {
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    transform 100ms ease,
+    box-shadow 150ms ease;
+}
+
+.ide-lang-btn:hover {
+  background-color: #45475a;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.ide-lang-btn:active {
+  transform: translateY(0px) scale(0.96);
+  box-shadow: none;
+}
+
+/* ─── Resizable Panel Handle ──────────────────────────────────────────────── */
+.ide-resize-handle-h {
+  cursor: row-resize;
+  transition: background-color 150ms ease;
+}
+
+.ide-resize-handle-h:hover {
+  background-color: #89b4fa40;
+}
+
+.ide-resize-handle-v {
+  cursor: col-resize;
+  transition: background-color 150ms ease;
+}
+
+.ide-resize-handle-v:hover {
+  background-color: #89b4fa40;
+}
+
+/* ─── Copy Button in Code Blocks ──────────────────────────────────────────── */
+.ide-copy-btn {
+  cursor: pointer;
+  transition: color 120ms ease, transform 100ms ease;
+}
+
+.ide-copy-btn:hover {
+  color: #cdd6f4;
+  transform: scale(1.1);
+}
+
+.ide-copy-btn:active {
+  transform: scale(0.9);
+}
+
+/* ─── Scrollbar Hover Cursor ──────────────────────────────────────────────── */
+.custom-scrollbar:hover,
+.custom-scrollbar-x:hover {
+  cursor: default;
+}
+
+/* ─── Monaco Editor Overrides ─────────────────────────────────────────────── */
+/* Ensure Monaco editor cursor is text throughout */
+.monaco-editor .view-overlays .cursor-line {
+  cursor: text;
+}
+
+/* Monaco gutter cursor */
+.monaco-editor .margin-view-overlays {
+  cursor: default;
+}
+
+/* Monaco minimap cursor */
+.monaco-editor .minimap {
+  cursor: pointer;
+}
+
+/* Monaco scrollbar cursor */
+.monaco-editor .scroll-decoration {
+  cursor: default;
+}
+
+/* ─── Smooth Focus Transitions ────────────────────────────────────────────── */
+/* Inputs gain a subtle glow on focus */
+input:focus,
+textarea:focus {
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+/* ─── Selection Highlight ─────────────────────────────────────────────────── */
+/* Slightly brighten selected/pressed state for all clickable items */
+.ide-selected {
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+/* ─── Reduced Motion Support ──────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
