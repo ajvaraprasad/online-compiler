@@ -73,13 +73,16 @@ function diagnosticsToMarkers(diagnostics: Diagnostic[], monaco: any): any[] {
         ? monaco.MarkerSeverity.Error
         : d.severity === 'warning'
           ? monaco.MarkerSeverity.Warning
-          : monaco.MarkerSeverity.Info,
+          : d.severity === 'info'
+            ? monaco.MarkerSeverity.Info
+            : monaco.MarkerSeverity.Hint,
     startLineNumber: d.line,
     startColumn: d.column,
     endLineNumber: d.endLine || d.line,
     endColumn: d.endColumn || d.column + 1,
     message: d.message,
     source: d.source,
+    code: d.code || undefined,
   }));
 }
 

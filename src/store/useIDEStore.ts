@@ -33,8 +33,13 @@ export interface Diagnostic {
   column: number;      // 1-based
   endLine: number;
   endColumn: number;
-  severity: 'error' | 'warning' | 'info';
+  severity: 'error' | 'warning' | 'info' | 'hint';
   source: string;      // 'gcc', 'python', 'node', 'codeforge'
+  code?: string;       // optional error code (e.g. 'W001', 'EOL')
+  relatedInfo?: {      // optional related information for cascading error suppression
+    isCascading?: boolean;   // true if this error was caused by another
+    rootLine?: number;       // line of the root cause error
+  };
 }
 
 // Validation status

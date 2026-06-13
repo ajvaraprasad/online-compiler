@@ -118,6 +118,21 @@ export function parseTerminalError(line: string): ParsedErrorLocation | null {
     };
   }
 
+  // ─── CodeForge summary: "N Error(s) found" or "1 Error found" ───────────
+  // This matches the concise error summary we write to the terminal.
+  // Clicking should navigate to the first error in the Problems panel.
+  match = line.match(/(\d+)\s+Error(?:s)?\s+found/i);
+  if (match && match.index !== undefined) {
+    // Navigate to line 1 as a fallback - the actual navigation happens
+    // via the Problems panel. This just makes the text clickable.
+    return {
+      line: 1,
+      matchStart: match.index,
+      matchEnd: match.index + match[0].length,
+      isProblemsLink: true,
+    } as ParsedErrorLocation & { isProblemsLink?: boolean };
+  }
+
   return null;
 }
 

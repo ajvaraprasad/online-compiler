@@ -607,6 +607,83 @@ class BackendValidationProvider implements ValidationProvider {
   }
 }
 
+// ─── Cascading Error Suppression ──────────────────────────────────────────────
+
+/**
+ * Detect and suppress cascading errors — errors that are a direct consequence
+ * of a prior error on the same or adjacent line. Modern compilers (like VS Code's
+ * built-in diagnostics) suppress these to avoid noise.
+ *
+ * Heuristic: If two errors are on the same line or within 1 line of each other,
+ * and one is a "root cause" type (unterminated string, unclosed bracket, missing
+ * quote), the second is likely cascading and should be suppressed.
+ *
+ * Cascading patterns (these secondary errors are commonly caused by root errors):
+ *   - "missing ')'" after "unterminated string"
+ *   - "unexpected token" after "unterminated string"
+ *   - "expected ';'" after a syntax error on the same line
+ *   - "Unclosed parenthesis" after "unterminated string literal"
+ */
+const ROOT_CAUSE_PATTERNS = [
+  /unterminated\s+string/i,
+  /unclosed\s+(string|quote)/i,
+  /missing\s+['"]quote/i,
+  /EOL\s+while\s+scanning\s+string/i,
+  /unterminated\s+string\s+literal/i,
+  /missing\s+closing\s+quote/i,
+];
+
+const CASCADING_PATTERNS = [
+  /unclosed\s+(parenthesis|bracket|brace)/i,
+  /missing\s+['")\]}/]/i,
+  /unexpected\s+(token|end|character)/i,
+  /expected\s+['");\]}/]/i,
+  /missing\s+['");\]}/]/i,
+  /unmatched\s+closing/i,
+  /unexpected\s+indent/i,
+  /expected\s+['");\]}\s]/i,
+];
+
+function isRootCauseError(message: string): boolean {
+  return ROOT_CAUSE_PATTERNS.some(p => p.test(message));
+}
+
+function isLikelyCascading(message: string): boolean {
+  return CASCADING_PATTERNS.some(p => p.test(message));
+}
+
+/**
+ * Suppress cascading errors from the diagnostic list.
+ * Returns a filtered list where obvious cascading errors are removed.
+ */
+export function suppressCascadingErrors(diagnostics: Diagnostic[]): Diagnostic[] {
+  if (diagnostics.length <= 1) return diagnostics;
+
+  // Find root cause errors
+  const rootErrors = diagnostics.filter(d =>
+    d.severity === 'error' && isRootCauseError(d.message)
+  );
+
+  if (rootErrors.length === 0) return diagnostics;
+
+  // Build a set of root error lines (with ±1 tolerance for adjacent cascading)
+  const rootLines = new Set<number>();
+  for (const root of rootErrors) {
+    rootLines.add(root.line);
+    rootLines.add(root.line - 1);
+    rootLines.add(root.line + 1);
+  }
+
+  // Filter: keep diagnostics that are NOT likely cascading on a root line
+  return diagnostics.filter(d => {
+    if (d.severity !== 'error') return true; // Keep warnings/info always
+    if (!isLikelyCascading(d.message)) return true; // Keep non-cascading errors
+    if (!rootLines.has(d.line)) return true; // Not near a root error
+    // This is likely a cascading error — mark it
+    return false;
+  });
+}
+
 // ─── Merge Logic ──────────────────────────────────────────────────────────────
 
 /**
@@ -614,6 +691,7 @@ class BackendValidationProvider implements ValidationProvider {
  * - Backend diagnostics are the source of truth (more accurate).
  * - Client diagnostics are kept only if they don't overlap with a backend
  *   diagnostic at the same line with the same severity.
+ * - Cascading errors are suppressed after merging.
  */
 export function mergeDiagnostics(
   clientDiagnostics: Diagnostic[],
@@ -629,7 +707,10 @@ export function mergeDiagnostics(
     d => !backendLines.has(`${d.line}:${d.severity}`)
   );
 
-  return [...backendDiagnostics, ...uniqueClientDiagnostics];
+  const merged = [...backendDiagnostics, ...uniqueClientDiagnostics];
+
+  // Suppress cascading errors
+  return suppressCascadingErrors(merged);
 }
 
 // ─── Helper: Client-side Quick Diagnostics (instant, no network) ──────────────

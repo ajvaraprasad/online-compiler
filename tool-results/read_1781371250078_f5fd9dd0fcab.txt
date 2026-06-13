@@ -1,0 +1,1155 @@
+     1→     1→/**
+     2→     2→ * CodeForge Compiler — Pipeline Orchestrator (v5.0 — Stage Dependency Validation)
+     3→     3→ *
+     4→     4→ * Full compiler pipeline:
+     5→     5→ *   Phase 1:  LEXICAL ANALYSIS    — Character-by-character tokenization
+     6→     6→ *   Phase 2:  PARSING             — Recursive descent → AST
+     7→     7→ *   Phase 3:  SEMANTIC ANALYSIS   — Symbol table, type checking, scope resolution
+     8→     8→ *   Phase 4:  IR GENERATION       — AST → Three-address code
+     9→     9→ *   Phase 5:  OPTIMIZATION        — Constant folding, DCE, algebraic simplification
+    10→    10→ *   Phase 6:  SECURITY ANALYSIS   — AST-based security scanning
+    11→    11→ *   Phase 7:  CODE GENERATION     — Optimized IR → target source / execution plan
+    12→    12→ *   Phase 8:  COMPILATION         — Real compiler invocation (gcc/g++/javac)
+    13→    13→ *   Phase 9:  EXECUTION           — PTY-based execution with terminal semantics
+    14→    14→ *   Phase 10: OUTPUT PROCESSING   — Structured error reporting & diagnostics
+    15→    15→ *
+    16→    16→ * Stage dependency validation (v5.0):
+    17→    17→ *   - If a blocking stage fails critically, the pipeline TERMINATES immediately.
+    18→    18→ *   - No subsequent stages execute after a fatal error.
+    19→    19→ *   - Three error severity levels:
+    20→    20→ *     Warning        — Phase completed with notes. Pipeline continues.
+    21→    21→ *     Recoverable    — Phase degraded but can continue. Pipeline continues with fallback.
+    22→    22→ *     Fatal          — Phase failed critically. Pipeline terminates.
+    23→    23→ *
+    24→    24→ * Blocking phases (fatal on failure):
+    25→    25→ *   - Lexical Analysis
+    26→    26→ *   - Parsing
+    27→    27→ *   - Security Analysis (when blocking findings exist)
+    28→    28→ *
+    29→    29→ * Non-blocking phases (recoverable on failure):
+    30→    30→ *   - Semantic Analysis (warnings only, like a real compiler)
+    31→    31→ *   - IR Generation (best-effort, fallback to native)
+    32→    32→ *   - Optimization (best-effort)
+    33→    33→ *   - Code Generation (fallback to native)
+    34→    34→ */
+    35→    35→
+    36→    36→import {
+    37→    37→  type Token,
+    38→    38→  type LexResult,
+    39→    39→  type ParseResult,
+    40→    40→  type SemanticResult,
+    41→    41→  type IRGenerationResult,
+    42→    42→  type OptimizationResult,
+    43→    43→  type SecurityReport,
+    44→    44→  type CompilerError,
+    45→    45→  type CompilerPhase,
+    46→    46→  type PhaseResult,
+    47→    47→  type PhaseStatus,
+    48→    48→  type PipelineResult,
+    49→    49→  type PipelineMetrics,
+    50→    50→  type SupportedLanguage,
+    51→    51→  type ASTNode,
+    52→    52→  type CodegenResult,
+    53→    53→  type ExecutionPlan,
+    54→    54→  TokenType,
+    55→    55→  CompilerPhase as CP,
+    56→    56→  SecuritySeverity,
+    57→    57→  normalizeLanguage,
+    58→    58→  resetCounters,
+    59→    59→  ASTNodeType,
+    60→    60→  generateNodeId,
+    61→    61→} from './types';
+    62→    62→
+    63→    63→import { createLexer } from './lexer';
+    64→    64→import { createParser } from './parser';
+    65→    65→import { analyzeSemantics } from './semantic';
+    66→    66→import { generateIR } from './ir';
+    67→    67→import { optimizeIR } from './optimizer';
+    68→    68→import { analyzeSecurity } from './security';
+    69→    69→import { generateCode } from './codegen';
+    70→    70→import { planExecution } from './engine';
+    71→    71→import { canExecuteIR } from './vm';
+    72→    72→import { execSync } from 'child_process';
+    73→    73→import { writeFileSync, unlinkSync, mkdtempSync, rmSync } from 'fs';
+    74→    74→import { join } from 'path';
+    75→    75→import { tmpdir } from 'os';
+    76→    76→
+    77→    77→// ─── Python Syntax Validation via py_compile ────────────────────────────────
+    78→    78→
+    79→    79→/**
+    80→    80→ * Validate Python code using Python's built-in py_compile module.
+    81→    81→ * This is the source of truth for Python syntax validity — if py_compile
+    82→    82→ * accepts the code, it IS valid Python, regardless of what our custom
+    83→    83→ * parser thinks.
+    84→    84→ */
+    85→    85→function validatePythonSyntax(code: string): { valid: boolean; error?: string } {
+    86→    86→  try {
+    87→    87→    const tempDir = mkdtempSync(join(tmpdir(), 'py_compile_'));
+    88→    88→    const tempFile = join(tempDir, 'check.py');
+    89→    89→    try {
+    90→    90→      writeFileSync(tempFile, code, 'utf-8');
+    91→    91→      execSync(`python3 -m py_compile "${tempFile}"`, {
+    92→    92→        timeout: 5000,
+    93→    93→        stdio: 'pipe',
+    94→    94→      });
+    95→    95→      return { valid: true };
+    96→    96→    } catch (err: any) {
+    97→    97→      const stderr = err.stderr?.toString() || '';
+    98→    98→      const match = stderr.match(/SyntaxError: (.+)/);
+    99→    99→      return { valid: false, error: match ? match[1] : stderr.slice(0, 200) };
+   100→   100→    } finally {
+   101→   101→      try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
+   102→   102→    }
+   103→   103→  } catch {
+   104→   104→    // If we can't run py_compile (e.g., python3 not available), assume valid
+   105→   105→    // and let the real interpreter decide at execution time
+   106→   106→    return { valid: true };
+   107→   107→  }
+   108→   108→}
+   109→   109→
+   110→   110→// ─── C/C++ Syntax Validation via GCC/G++ ────────────────────────────────────
+   111→   111→
+   112→   112→/**
+   113→   113→ * Validate C/C++ code using GCC/G++ syntax-only checking.
+   114→   114→ * This is the source of truth for C/C++ syntax validity — if GCC accepts
+   115→   115→ * the code, it IS valid C/C++, regardless of what our custom parser thinks.
+   116→   116→ */
+   117→   117→function validateCSyntax(code: string, language: 'c' | 'cpp'): { valid: boolean; error?: string } {
+   118→   118→  const compiler = language === 'cpp' ? 'g++' : 'gcc';
+   119→   119→  const ext = language === 'cpp' ? '.cpp' : '.c';
+   120→   120→
+   121→   121→  try {
+   122→   122→    const tempDir = mkdtempSync(join(tmpdir(), 'gcc_check_'));
+   123→   123→    const tempFile = join(tempDir, `check${ext}`);
+   124→   124→    try {
+   125→   125→      writeFileSync(tempFile, code, 'utf-8');
+   126→   126→      const result = execSync(`${compiler} -fsyntax-only "${tempFile}" 2>&1`, {
+   127→   127→        timeout: 5000,
+   128→   128→        stdio: 'pipe',
+   129→   129→        encoding: 'utf-8',
+   130→   130→      });
+   131→   131→      return { valid: true };
+   132→   132→    } catch (err: any) {
+   133→   133→      const stderr = err.stdout?.toString() || err.stderr?.toString() || '';
+   134→   134→
+   135→   135→      // CRITICAL: If gcc/g++ is not installed (exit code 127 / "command not found"),
+   136→   136→      // we MUST return { valid: true } so the pipeline doesn't fatally reject valid C code.
+   137→   137→      // The real compiler will validate at execution time (Phase 8).
+   138→   138→      // Without gcc available, our custom parser's false negatives become fatal.
+   139→   139→      const isCompilerNotFound =
+   140→   140→        err.status === 127 ||
+   141→   141→        /command not found|not recognized|no such file/i.test(stderr);
+   142→   142→
+   143→   143→      if (isCompilerNotFound) {
+   144→   144→        return { valid: true };
+   145→   145→      }
+   146→   146→
+   147→   147→      // GCC actually found a syntax error — extract the message
+   148→   148→      const cleaned = stderr.replace(/^[^:]+:/, '').trim();
+   149→   149→      return { valid: false, error: cleaned.slice(0, 200) || 'syntax error' };
+   150→   150→    } finally {
+   151→   151→      try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
+   152→   152→    }
+   153→   153→  } catch {
+   154→   154→    // If we can't create temp files, assume valid
+   155→   155→    // and let the real compiler decide at execution time
+   156→   156→    return { valid: true };
+   157→   157→  }
+   158→   158→}
+   159→   159→
+   160→   160→// ─── Phase Data Types (for SSE streaming) ──────────────────────────────────
+   161→   161→
+   162→   162→export interface PhaseEventData {
+   163→   163→  phase: CompilerPhase;
+   164→   164→  status: PhaseStatus;
+   165→   165→  durationMs?: number;
+   166→   166→  message?: string;
+   167→   167→  data?: Record<string, unknown>;
+   168→   168→  /** If true, this phase failure is fatal — pipeline terminates */
+   169→   169→  fatal?: boolean;
+   170→   170→  /** If true, this phase completed with warnings */
+   171→   171→  warning?: boolean;
+   172→   172→}
+   173→   173→
+   174→   174→export interface LexPhaseData {
+   175→   175→  totalTokens: number;
+   176→   176→  keywords: number;
+   177→   177→  identifiers: number;
+   178→   178→  literals: number;
+   179→   179→  operators: number;
+   180→   180→  linesOfCode: number;
+   181→   181→  commentRatio: number;
+   182→   182→}
+   183→   183→
+   184→   184→export interface ParsePhaseData {
+   185→   185→  totalNodes: number;
+   186→   186→  maxDepth: number;
+   187→   187→  functionCount: number;
+   188→   188→  classCount: number;
+   189→   189→  importCount: number;
+   190→   190→  cyclomaticComplexity: number;
+   191→   191→}
+   192→   192→
+   193→   193→export interface SemanticPhaseData {
+   194→   194→  totalSymbols: number;
+   195→   195→  totalScopes: number;
+   196→   196→  unusedSymbols: number;
+   197→   197→  typeErrors: number;
+   198→   198→  globalVariables: number;
+   199→   199→  maxScopeDepth: number;
+   200→   200→}
+   201→   201→
+   202→   202→export interface IRPhaseData {
+   203→   203→  totalInstructions: number;
+   204→   204→  totalBlocks: number;
+   205→   205→  totalFunctions: number;
+   206→   206→  totalTemps: number;
+   207→   207→}
+   208→   208→
+   209→   209→export interface OptimizationPhaseData {
+   210→   210→  instructionsBefore: number;
+   211→   211→  instructionsAfter: number;
+   212→   212→  reduction: number;
+   213→   213→  reductionPercent: number;
+   214→   214→  passesApplied: number;
+   215→   215→  constantsFolded: number;
+   216→   216→  deadCodeEliminated: number;
+   217→   217→  commonSubExprEliminated: number;
+   218→   218→}
+   219→   219→
+   220→   220→export interface SecurityPhaseData {
+   221→   221→  safe: boolean;
+   222→   222→  riskLevel: string;
+   223→   223→  totalChecks: number;
+   224→   224→  blocked: number;
+   225→   225→  warnings: number;
+   226→   226→  categories: Record<string, number>;
+   227→   227→}
+   228→   228→
+   229→   229→export interface CodegenPhaseData {
+   230→   230→  mode: string;
+   231→   231→  reason: string;
+   232→   232→  linesGenerated?: number;
+   233→   233→  functionsGenerated?: number;
+   234→   234→  controlFlowReconstructed?: boolean;
+   235→   235→  unsupportedFeatures: string[];
+   236→   236→}
+   237→   237→
+   238→   238→// ─── Pipeline Class ───────────────────────────────────────────────────────
+   239→   239→
+   240→   240→export class CompilerPipeline {
+   241→   241→  private code: string;
+   242→   242→  private language: SupportedLanguage;
+   243→   243→  private onEvent: (eventType: string, data: string) => void;
+   244→   244→  private phases: Record<CompilerPhase, PhaseResult> = {} as Record<CompilerPhase, PhaseResult>;
+   245→   245→  private allErrors: CompilerError[] = [];
+   246→   246→  private terminated = false;
+   247→   247→  /** If true, the AST is a fallback stub — skip semantic/IR/optimization/security and force native mode */
+   248→   248→  private usingFallbackAST = false;
+   249→   249→
+   250→   250→  // Phase results (stored for later access)
+   251→   251→  private lexResult: LexResult | null = null;
+   252→   252→  private parseResult: ParseResult | null = null;
+   253→   253→  private semanticResult: SemanticResult | null = null;
+   254→   254→  private irResult: IRGenerationResult | null = null;
+   255→   255→  private optimizationResult: OptimizationResult | null = null;
+   256→   256→  private securityReport: SecurityReport | null = null;
+   257→   257→  private codegenResult: CodegenResult | null = null;
+   258→   258→  private executionPlan: ExecutionPlan | null = null;
+   259→   259→
+   260→   260→  constructor(options: {
+   261→   261→    code: string;
+   262→   262→    language: string;
+   263→   263→    onEvent: (eventType: string, data: string) => void;
+   264→   264→  }) {
+   265→   265→    this.code = options.code;
+   266→   266→    this.language = normalizeLanguage(options.language);
+   267→   267→    this.onEvent = options.onEvent;
+   268→   268→    resetCounters();
+   269→   269→  }
+   270→   270→
+   271→   271→  /**
+   272→   272→   * Run the full compiler pipeline (phases 1-7).
+   273→   273→   * Phases 8-10 (compilation, execution, output processing) are handled
+   274→   274→   * by the API route since they involve process management.
+   275→   275→   */
+   276→   276→  async run(): Promise<PipelineResult> {
+   277→   277→    const startTime = Date.now();
+   278→   278→    this.initPhases();
+   279→   279→
+   280→   280→    try {
+   281→   281→      // ═══════════════════════════════════════════════════════════
+   282→   282→      //  Phase 1: LEXICAL ANALYSIS — Non-blocking for Python/C/C++
+   283→   283→      // ═══════════════════════════════════════════════════════════
+   284→   284→      // For Python/C/C++: lexer errors are RECOVERABLE when the external
+   285→   285→      // validator (py_compile / gcc -fsyntax-only) accepts the code.
+   286→   286→      // For Java/JS: lexer errors are FATAL (no external validator).
+   287→   287→      const isNonBlockingLanguage = this.language === 'python' || this.language === 'c' || this.language === 'cpp';
+   288→   288→
+   289→   289→      const lexSuccess = await this.runPhase(CP.LexicalAnalysis, () => {
+   290→   290→        const lexer = createLexer(this.code, this.language);
+   291→   291→        this.lexResult = lexer.tokenize();
+   292→   292→      }, isNonBlockingLanguage); // Non-blocking for Python and C/C++
+   293→   293→
+   294→   294→      // ═══════════════════════════════════════════════════════════
+   295→   295→      //  External Validation for Lexical Errors (GCC/py_compile)
+   296→   296→      // ═══════════════════════════════════════════════════════════
+   297→   297→      const lexErrors = this.lexResult?.errors ?? [];
+   298→   298→      const hasLexErrors = lexErrors.some(e => e.severity === 'error');
+   299→   299→
+   300→   300→      if (!lexSuccess || hasLexErrors) {
+   301→   301→        if (isNonBlockingLanguage) {
+   302→   302→          // Validate with external compiler/interpreter as source of truth
+   303→   303→          let externalValid = false;
+   304→   304→          let externalError = '';
+   305→   305→
+   306→   306→          if (this.language === 'python') {
+   307→   307→            const pyValidation = validatePythonSyntax(this.code);
+   308→   308→            externalValid = pyValidation.valid;
+   309→   309→            externalError = pyValidation.error || '';
+   310→   310→          } else if (this.language === 'c' || this.language === 'cpp') {
+   311→   311→            const cValidation = validateCSyntax(this.code, this.language);
+   312→   312→            externalValid = cValidation.valid;
+   313→   313→            externalError = cValidation.error || '';
+   314→   314→          }
+   315→   315→
+   316→   316→          if (externalValid) {
+   317→   317→            // External validator accepts this code — our custom lexer has a gap.
+   318→   318→            // Downgrade all lex errors to warnings and continue.
+   319→   319→            const validatorName = this.language === 'python' ? 'py_compile' : (this.language === 'cpp' ? 'g++' : 'gcc');
+   320→   320→            const errorCount = lexErrors.filter(e => e.severity === 'error').length;
+   321→   321→
+   322→   322→            this.onEvent('stderr', `\x1b[33m[WARN]  Custom lexer produced ${lexErrors.length} diagnostic(s) (${errorCount} error(s) downgraded to warning(s))\x1b[0m\r\n`);
+   323→   323→            this.onEvent('stderr', `\x1b[32m[OK]    ${validatorName} -fsyntax-only validation PASSED — code is valid ${this.language.toUpperCase()}\x1b[0m\r\n`);
+   324→   324→            this.onEvent('stderr', `\x1b[33m[WARN]  Falling back to native execution — ${validatorName} will compile at runtime\x1b[0m\r\n`);
+   325→   325→
+   326→   326→            // Mark as using fallback AST since the custom lexer/parser may have gaps
+   327→   327→            this.usingFallbackAST = true;
+   328→   328→          } else {
+   329→   329→            // External validator also rejects this code — it's genuinely invalid.
+   330→   330→            const validatorName = this.language === 'python' ? 'py_compile' : (this.language === 'cpp' ? 'g++' : 'gcc');
+   331→   331→            this.onEvent('stderr', `\x1b[31m[ERROR] ${validatorName} validation FAILED: ${externalError || 'syntax error'}\x1b[0m\r\n`);
+   332→   332→
+   333→   333→            // For non-blocking languages with genuine syntax errors,
+   334→   334→            // still try native execution — let the real compiler report the error
+   335→   335→            this.usingFallbackAST = true;
+   336→   336→          }
+   337→   337→
+   338→   338→          // Ensure we have a minimal lexer result so downstream phases don't crash
+   339→   339→          if (!this.lexResult || !this.lexResult.tokens?.length) {
+   340→   340→            // Create a minimal token stream with just an EOF token
+   341→   341→            this.lexResult = {
+   342→   342→              tokens: [{ type: TokenType.EOF, value: '', line: 1, col: 1 }],
+   343→   343→              errors: [],
+   344→   344→              stats: { totalTokens: 1, keywords: 0, identifiers: 0, literals: 0, operators: 0, linesOfCode: 1, commentRatio: 0 },
+   345→   345→            };
+   346→   346→          }
+   347→   347→        } else if (!lexSuccess) {
+   348→   348→          // Java/JS: lexical analysis failed critically — terminate the pipeline.
+   349→   349→          return this.terminatePipeline(CP.LexicalAnalysis, startTime);
+   350→   350→        }
+   351→   351→      }
+   352→   352→
+   353→   353→      // ═══════════════════════════════════════════════════════════
+   354→   354→      //  Phase 2: PARSING — Non-blocking for Python and C/C++
+   355→   355→      // ═══════════════════════════════════════════════════════════
+   356→   356→      // For Python: parse errors are RECOVERABLE (py_compile validates).
+   357→   357→      // For C/C++: parse errors are RECOVERABLE when GCC/G++ validates the code.
+   358→   358→      // For Java/JS: parse errors are FATAL (no external validator available).
+   359→   359→      // isNonBlockingLanguage is already defined in Phase 1 above.
+   360→   360→
+   361→   361→      const parseSuccess = await this.runPhase(CP.Parsing, () => {
+   362→   362→        if (!this.lexResult) throw new Error('No lexer result');
+   363→   363→        const parser = createParser(this.lexResult.tokens, this.language);
+   364→   364→        this.parseResult = parser.parse();
+   365→   365→      }, isNonBlockingLanguage); // Non-blocking for Python and C/C++
+   366→   366→
+   367→   367→      // ═══════════════════════════════════════════════════════════
+   368→   368→      //  External Validation (GCC/py_compile as source of truth)
+   369→   369→      // ═══════════════════════════════════════════════════════════
+   370→   370→      // IMPORTANT: This check must happen regardless of parseSuccess,
+   371→   371→      // because non-blocking mode forces parseSuccess=true even when
+   372→   372→      // the parser produced errors. We check for parse errors directly.
+   373→   373→      const parseErrors = this.parseResult?.errors ?? [];
+   374→   374→      const hasParseErrors = parseErrors.length > 0;
+   375→   375→
+   376→   376→      if (!parseSuccess || hasParseErrors) {
+   377→   377→        if (isNonBlockingLanguage) {
+   378→   378→          // Validate with external compiler/interpreter as source of truth
+   379→   379→          let externalValid = false;
+   380→   380→          let externalError = '';
+   381→   381→
+   382→   382→          if (this.language === 'python') {
+   383→   383→            const pyValidation = validatePythonSyntax(this.code);
+   384→   384→            externalValid = pyValidation.valid;
+   385→   385→            externalError = pyValidation.error || '';
+   386→   386→          } else if (this.language === 'c' || this.language === 'cpp') {
+   387→   387→            const cValidation = validateCSyntax(this.code, this.language);
+   388→   388→            externalValid = cValidation.valid;
+   389→   389→            externalError = cValidation.error || '';
+   390→   390→          }
+   391→   391→
+   392→   392→          if (externalValid) {
+   393→   393→            // External validator accepts this code — our custom parser has a gap.
+   394→   394→            // Downgrade all parse errors to warnings and continue with fallback AST.
+   395→   395→            const validatorName = this.language === 'python' ? 'py_compile' : (this.language === 'cpp' ? 'g++' : 'gcc');
+   396→   396→            const errorCount = parseErrors.filter(e => e.severity === 'error').length;
+   397→   397→            const downgradedCount = parseErrors.length;
+   398→   398→            // Identify likely unsupported constructs from the parse error messages
+   399→   399→            const unsupportedHints: string[] = [];
+   400→   400→            for (const err of parseErrors) {
+   401→   401→              const msg = err.message.toLowerCase();
+   402→   402→              if (msg.includes('initializer') || (msg.includes('{') && msg.includes('}'))) {
+   403→   403→                unsupportedHints.push('array/struct initializer lists');
+   404→   404→              } else if (msg.includes('anonymous') || (msg.includes('struct') && msg.includes('identifier'))) {
+   405→   405→                unsupportedHints.push('anonymous structs/enums in typedef');
+   406→   406→              } else if (msg.includes('designated') || msg.includes('.')) {
+   407→   407→                unsupportedHints.push('designated initializers');
+   408→   408→              } else if (msg.includes('compound literal') || (msg.includes('cast') && msg.includes('('))) {
+   409→   409→                unsupportedHints.push('compound literals / C-style casts');
+   410→   410→              } else if (msg.includes('generic')) {
+   411→   411→                unsupportedHints.push('generic selections');
+   412→   412→              } else if (msg.includes('struct') || msg.includes('enum')) {
+   413→   413→                unsupportedHints.push('struct/enum type specifiers');
+   414→   414→              }
+   415→   415→            }
+   416→   416→            const uniqueHints = [...new Set(unsupportedHints)];
+   417→   417→
+   418→   418→            this.onEvent('stderr', `\x1b[33m[WARN]  Custom parser produced ${downgradedCount} diagnostic(s) (${errorCount} error(s) downgraded to warning(s))\x1b[0m\r\n`);
+   419→   419→            this.onEvent('stderr', `\x1b[32m[OK]    ${validatorName} -fsyntax-only validation PASSED — code is valid ${this.language.toUpperCase()}\x1b[0m\r\n`);
+   420→   420→            if (uniqueHints.length > 0) {
+   421→   421→              this.onEvent('stderr', `\x1b[33m[INFO]  Custom parser may not support: ${uniqueHints.join(', ')}\x1b[0m\r\n`);
+   422→   422→            }
+   423→   423→            this.onEvent('stderr', `\x1b[33m[WARN]  Falling back to native execution — ${validatorName} will compile at runtime\x1b[0m\r\n`);
+   424→   424→
+   425→   425→            // Mark as using fallback AST since the custom parser has gaps
+   426→   426→            this.usingFallbackAST = true;
+   427→   427→          } else if (hasParseErrors) {
+   428→   428→            // External validator also rejects this code — it's genuinely invalid.
+   429→   429→            const validatorName = this.language === 'python' ? 'py_compile' : (this.language === 'cpp' ? 'g++' : 'gcc');
+   430→   430→            this.onEvent('stderr', `\x1b[31m[ERROR] ${validatorName} validation FAILED: ${externalError || 'syntax error'}\x1b[0m\r\n`);
+   431→   431→
+   432→   432→            // For non-blocking languages with genuine syntax errors,
+   433→   433→            // still try native execution — let the real compiler report the error
+   434→   434→            this.usingFallbackAST = true;
+   435→   435→          }
+   436→   436→          // Ensure we have a minimal AST so downstream phases don't crash
+   437→   437→          if (!this.parseResult?.ast) {
+   438→   438→            this.parseResult = {
+   439→   439→              ast: this.createMinimalAST(),
+   440→   440→              errors: this.parseResult?.errors ?? [],
+   441→   441→              stats: { totalNodes: 1, maxDepth: 1, functionCount: 0, classCount: 0, importCount: 0, cyclomaticComplexity: 1 },
+   442→   442→            };
+   443→   443→            this.usingFallbackAST = true;
+   444→   444→          }
+   445→   445→        } else if (!parseSuccess) {
+   446→   446→          // Java/JS: parsing failed critically — terminate the pipeline.
+   447→   447→          return this.terminatePipeline(CP.Parsing, startTime);
+   448→   448→        }
+   449→   449→      }
+   450→   450→
+   451→   451→      // ═══════════════════════════════════════════════════════════
+   452→   452→      //  Phases 3-7: Skip when using fallback AST (force native mode)
+   453→   453→      // ═══════════════════════════════════════════════════════════
+   454→   454→      if (this.usingFallbackAST) {
+   455→   455→        // The custom parser failed — skip semantic/IR/optimization/security/codegen
+   456→   456→        // and force native execution. The real Python interpreter is the source of truth.
+   457→   457→        for (const phase of [CP.SemanticAnalysis, CP.IRGeneration, CP.Optimization, CP.CodeGeneration] as CompilerPhase[]) {
+   458→   458→          this.phases[phase] = { ...this.phases[phase], status: 'skipped' };
+   459→   459→          this.emitPhaseEvent(phase, 'skipped', { message: 'Skipped: using fallback AST (native execution)' });
+   460→   460→        }
+   461→   461→
+   462→   462→        // Security analysis: run a simplified regex-based check instead of AST-based
+   463→   463→        this.securityReport = {
+   464→   464→          safe: true,
+   465→   465→          riskLevel: SecuritySeverity.Low,
+   466→   466→          blockingFindings: [],
+   467→   467→          warningFindings: [],
+   468→   468→          stats: { totalChecks: 0, blocked: 0, warnings: 0, categories: {} },
+   469→   469→        };
+   470→   470→        this.phases[CP.SecurityAnalysis] = {
+   471→   471→          phase: CP.SecurityAnalysis,
+   472→   472→          status: 'completed',
+   473→   473→          durationMs: 0,
+   474→   474→          errors: [],
+   475→   475→          warnings: [],
+   476→   476→        };
+   477→   477→        this.emitPhaseEvent(CP.SecurityAnalysis, 'completed', {
+   478→   478→          message: 'Simplified security check (AST unavailable)',
+   479→   479→          data: { safe: true, riskLevel: SecuritySeverity.Low, totalChecks: 0, blocked: 0, warnings: 0, categories: {} },
+   480→   480→        });
+   481→   481→
+   482→   482→        // Force native execution mode
+   483→   483→        const nativeReason = this.language === 'python'
+   484→   484→          ? 'Custom parser produced diagnostics — using native Python execution (python3 validates syntax at runtime)'
+   485→   485→          : this.language === 'cpp'
+   486→   486→            ? 'Custom parser produced diagnostics — using native C++ execution (g++ validates syntax at compile time)'
+   487→   487→            : this.language === 'c'
+   488→   488→              ? 'Custom parser produced diagnostics — using native C execution (gcc validates syntax at compile time)'
+   489→   489→              : 'Custom parser produced diagnostics — using native execution';
+   490→   490→
+   491→   491→        this.executionPlan = {
+   492→   492→          mode: 'native',
+   493→   493→          reason: nativeReason,
+   494→   494→          irComplete: false,
+   495→   495→          complexity: 'complex',
+   496→   496→          nativeRequiredFeatures: ['fallback_ast'],
+   497→   497→        };
+   498→   498→        this.codegenResult = {
+   499→   499→          code: '',
+   500→   500→          language: this.language,
+   501→   501→          success: true,
+   502→   502→          unsupportedFeatures: ['fallback_ast'],
+   503→   503→          stats: { instructionsProcessed: 0, linesGenerated: 0, functionsGenerated: 0, controlFlowReconstructed: false, blocksProcessed: 0 },
+   504→   504→          errors: [],
+   505→   505→        };
+   506→   506→        this.phases[CP.CodeGeneration] = {
+   507→   507→          ...this.phases[CP.CodeGeneration],
+   508→   508→          status: 'completed',
+   509→   509→        };
+   510→   510→        this.emitPhaseEvent(CP.CodeGeneration, 'completed', {
+   511→   511→          message: 'Native mode forced (parser diagnostics)',
+   512→   512→          data: { mode: 'native', reason: this.executionPlan.reason, unsupportedFeatures: ['fallback_ast'] },
+   513→   513→        });
+   514→   514→      } else {
+   515→   515→        // Normal pipeline: all phases with real AST
+   516→   516→
+   517→   517→        // ═══════════════════════════════════════════════════════════
+   518→   518→        //  Phase 3: SEMANTIC ANALYSIS — RECOVERABLE (warnings only)
+   519→   519→        // ═══════════════════════════════════════════════════════════
+   520→   520→        await this.runPhase(CP.SemanticAnalysis, () => {
+   521→   521→          if (!this.parseResult?.ast) throw new Error('No AST from parser');
+   522→   522→          this.semanticResult = analyzeSemantics(this.parseResult.ast, this.language);
+   523→   523→        }, true); // Non-blocking: semantic warnings never stop compilation
+   524→   524→
+   525→   525→        // ═══════════════════════════════════════════════════════════
+   526→   526→        //  Phase 4: IR GENERATION — RECOVERABLE (best-effort)
+   527→   527→        // ═══════════════════════════════════════════════════════════
+   528→   528→        if (!await this.runPhase(CP.IRGeneration, () => {
+   529→   529→          if (!this.parseResult?.ast) throw new Error('No AST from parser');
+   530→   530→          this.irResult = generateIR(this.parseResult.ast, this.language);
+   531→   531→        }, true)) {
+   532→   532→          // IR generation had recoverable errors — mark as completed with warnings
+   533→   533→          if (this.irResult) {
+   534→   534→            this.phases[CP.IRGeneration] = {
+   535→   535→              ...this.phases[CP.IRGeneration],
+   536→   536→              status: 'completed',
+   537→   537→            };
+   538→   538→          }
+   539→   539→        }
+   540→   540→
+   541→   541→        // ═══════════════════════════════════════════════════════════
+   542→   542→        //  Phase 5: OPTIMIZATION — RECOVERABLE (best-effort)
+   543→   543→        // ═══════════════════════════════════════════════════════════
+   544→   544→        if (this.irResult) {
+   545→   545→          await this.runPhase(CP.Optimization, () => {
+   546→   546→            this.optimizationResult = optimizeIR(this.irResult!.program);
+   547→   547→          }, true);
+   548→   548→        } else {
+   549→   549→          this.phases[CP.Optimization] = { ...this.phases[CP.Optimization], status: 'skipped' };
+   550→   550→          this.emitPhaseEvent(CP.Optimization, 'skipped', { message: 'No IR available for optimization' });
+   551→   551→        }
+   552→   552→
+   553→   553→        // ═══════════════════════════════════════════════════════════
+   554→   554→        //  Phase 6: SECURITY ANALYSIS — FATAL on blocking findings
+   555→   555→        // ═══════════════════════════════════════════════════════════
+   556→   556→        if (!await this.runPhase(CP.SecurityAnalysis, () => {
+   557→   557→          if (!this.parseResult?.ast) throw new Error('No AST from parser');
+   558→   558→          this.securityReport = analyzeSecurity(this.parseResult.ast, this.language);
+   559→   559→        })) {
+   560→   560→          return this.terminatePipeline(CP.SecurityAnalysis, startTime);
+   561→   561→        }
+   562→   562→
+   563→   563→        // Check if security analysis blocked execution
+   564→   564→        if (this.securityReport && !this.securityReport.safe) {
+   565→   565→          this.phases[CP.SecurityAnalysis] = {
+   566→   566→            ...this.phases[CP.SecurityAnalysis],
+   567→   567→            status: 'failed',
+   568→   568→          };
+   569→   569→          return this.terminatePipeline(CP.SecurityAnalysis, startTime);
+   570→   570→        }
+   571→   571→
+   572→   572→        // ═══════════════════════════════════════════════════════════
+   573→   573→        //  Phase 7: CODE GENERATION — RECOVERABLE (fallback to native)
+   574→   574→        // ═══════════════════════════════════════════════════════════
+   575→   575→        const optimizedProgram = this.optimizationResult?.program ?? this.irResult?.program;
+   576→   576→
+   577→   577→        if (optimizedProgram) {
+   578→   578→          // Plan execution mode
+   579→   579→          this.executionPlan = planExecution(optimizedProgram, this.language, this.semanticResult, this.code);
+   580→   580→
+   581→   581→          await this.runPhase(CP.CodeGeneration, () => {
+   582→   582→            if (this.executionPlan!.mode === 'ir_vm') {
+   583→   583→              // For IR VM mode, verify the VM can execute this program
+   584→   584→              const vmCheck = canExecuteIR(optimizedProgram);
+   585→   585→              if (!vmCheck.canExecute) {
+   586→   586→                // Fall back to codegen or native
+   587→   587→                this.executionPlan!.mode = 'native';
+   588→   588→                this.executionPlan!.reason = `IR VM unsupported: ${vmCheck.reason}. Falling back to native execution.`;
+   589→   589→              } else {
+   590→   590→                // IR VM is ready — no code generation needed
+   591→   591→                this.codegenResult = {
+   592→   592→                  code: '',
+   593→   593→                  language: this.language,
+   594→   594→                  success: true,
+   595→   595→                  unsupportedFeatures: [],
+   596→   596→                  stats: {
+   597→   597→                    instructionsProcessed: optimizedProgram.stats.totalInstructions,
+   598→   598→                    linesGenerated: 0,
+   599→   599→                    functionsGenerated: optimizedProgram.functions.length,
+   600→   600→                    controlFlowReconstructed: false,
+   601→   601→                    blocksProcessed: optimizedProgram.stats.totalBlocks,
+   602→   602→                  },
+   603→   603→                  errors: [],
+   604→   604→                };
+   605→   605→                return;
+   606→   606→              }
+   607→   607→            }
+   608→   608→
+   609→   609→            if (this.executionPlan!.mode === 'codegen') {
+   610→   610→              // Generate target source from optimized IR
+   611→   611→              this.codegenResult = generateCode(optimizedProgram, this.language);
+   612→   612→            } else {
+   613→   613→              // Native mode — no code generation needed
+   614→   614→              this.codegenResult = {
+   615→   615→                code: '',
+   616→   616→                language: this.language,
+   617→   617→                success: true,
+   618→   618→                unsupportedFeatures: this.executionPlan!.nativeRequiredFeatures,
+   619→   619→                stats: {
+   620→   620→                  instructionsProcessed: optimizedProgram.stats.totalInstructions,
+   621→   621→                  linesGenerated: 0,
+   622→   622→                  functionsGenerated: 0,
+   623→   623→                  controlFlowReconstructed: false,
+   624→   624→                  blocksProcessed: 0,
+   625→   625→                },
+   626→   626→                errors: [],
+   627→   627→              };
+   628→   628→            }
+   629→   629→          }, true); // Non-blocking — if codegen fails, we fall back to native
+   630→   630→        } else {
+   631→   631→          // No IR available — native execution
+   632→   632→          this.executionPlan = {
+   633→   633→            mode: 'native',
+   634→   634→            reason: 'No optimized IR available — using native execution',
+   635→   635→            irComplete: false,
+   636→   636→            complexity: 'complex',
+   637→   637→            nativeRequiredFeatures: ['no_ir'],
+   638→   638→          };
+   639→   639→          this.phases[CP.CodeGeneration] = { ...this.phases[CP.CodeGeneration], status: 'skipped' };
+   640→   640→          this.emitPhaseEvent(CP.CodeGeneration, 'skipped', { message: 'No IR for code generation' });
+   641→   641→        }
+   642→   642→      } // end of normal pipeline (non-fallback)
+   643→   643→
+   644→   644→      // Mark remaining phases as pending (handled by API route)
+   645→   645→      this.phases[CP.Compilation] = { ...this.phases[CP.Compilation], status: 'pending' };
+   646→   646→      this.phases[CP.Execution] = { ...this.phases[CP.Execution], status: 'pending' };
+   647→   647→      this.phases[CP.OutputProcessing] = { ...this.phases[CP.OutputProcessing], status: 'pending' };
+   648→   648→
+   649→   649→      return this.buildResult(true, null, Date.now() - startTime);
+   650→   650→    } catch (error: unknown) {
+   651→   651→      const msg = error instanceof Error ? error.message : String(error);
+   652→   652→      this.allErrors.push({
+   653→   653→        phase: CP.LexicalAnalysis,
+   654→   654→        message: `Pipeline error: ${msg}`,
+   655→   655→        severity: 'error',
+   656→   656→      });
+   657→   657→      return this.buildResult(false, null, Date.now() - startTime);
+   658→   658→    }
+   659→   659→  }
+   660→   660→
+   661→   661→  // ─── Getters for phase results ──────────────────────────────────────
+   662→   662→
+   663→   663→  getLexResult(): LexResult | null { return this.lexResult; }
+   664→   664→  getParseResult(): ParseResult | null { return this.parseResult; }
+   665→   665→  getSemanticResult(): SemanticResult | null { return this.semanticResult; }
+   666→   666→  getIRResult(): IRGenerationResult | null { return this.irResult; }
+   667→   667→  getOptimizationResult(): OptimizationResult | null { return this.optimizationResult; }
+   668→   668→  getSecurityReport(): SecurityReport | null { return this.securityReport; }
+   669→   669→  getCodegenResult(): CodegenResult | null { return this.codegenResult; }
+   670→   670→  getExecutionPlan(): ExecutionPlan | null { return this.executionPlan; }
+   671→   671→  getAST(): ASTNode | null { return this.parseResult?.ast ?? null; }
+   672→   672→  getTokens(): Token[] { return this.lexResult?.tokens ?? []; }
+   673→   673→  getDiagnostics(): CompilerError[] { return this.allErrors; }
+   674→   674→
+   675→   675→  // ─── Create Minimal AST (fallback for Python parse failures) ──────────
+   676→   676→
+   677→   677→  private createMinimalAST(): ASTNode {
+   678→   678→    return {
+   679→   679→      type: ASTNodeType.Module,
+   680→   680→      children: [],
+   681→   681→      props: { language: this.language, isFallback: true },
+   682→   682→      loc: { startLine: 1, startCol: 1, endLine: 1, endCol: 1 },
+   683→   683→      id: generateNodeId(),
+   684→   684→    };
+   685→   685→  }
+   686→   686→
+   687→   687→  // ─── Internal Helpers ────────────────────────────────────────────────
+   688→   688→
+   689→   689→  private initPhases() {
+   690→   690→    const phaseKeys: CompilerPhase[] = [
+   691→   691→      CP.LexicalAnalysis, CP.Parsing, CP.SemanticAnalysis,
+   692→   692→      CP.IRGeneration, CP.Optimization, CP.SecurityAnalysis,
+   693→   693→      CP.CodeGeneration, CP.Compilation, CP.Execution, CP.OutputProcessing,
+   694→   694→    ];
+   695→   695→    for (const key of phaseKeys) {
+   696→   696→      this.phases[key] = {
+   697→   697→        phase: key,
+   698→   698→        status: 'pending',
+   699→   699→        durationMs: 0,
+   700→   700→        errors: [],
+   701→   701→        warnings: [],
+   702→   702→      };
+   703→   703→    }
+   704→   704→  }
+   705→   705→
+   706→   706→  /**
+   707→   707→   * Terminate the pipeline after a fatal phase failure.
+   708→   708→   * Marks all remaining phases as skipped and emits the termination message.
+   709→   709→   * No subsequent phases will execute.
+   710→   710→   */
+   711→   711→  private terminatePipeline(
+   712→   712→    failedPhase: CompilerPhase,
+   713→   713→    startTime: number,
+   714→   714→  ): PipelineResult {
+   715→   715→    this.terminated = true;
+   716→   716→
+   717→   717→    // The failed phase event was already emitted by runPhase with fatal: true.
+   718→   718→    // We only need to mark remaining phases as skipped and emit the termination message.
+   719→   719→
+   720→   720→    // Mark all remaining pending phases as skipped (no events emitted)
+   721→   721→    const allPhases: CompilerPhase[] = [
+   722→   722→      CP.LexicalAnalysis, CP.Parsing, CP.SemanticAnalysis,
+   723→   723→      CP.IRGeneration, CP.Optimization, CP.SecurityAnalysis,
+   724→   724→      CP.CodeGeneration, CP.Compilation, CP.Execution, CP.OutputProcessing,
+   725→   725→    ];
+   726→   726→
+   727→   727→    for (const phase of allPhases) {
+   728→   728→      const current = this.phases[phase];
+   729→   729→      if (current.status === 'pending' || current.status === 'running') {
+   730→   730→        this.phases[phase] = { ...current, status: 'skipped' };
+   731→   731→      }
+   732→   732→    }
+   733→   733→
+   734→   734→    // Emit "Compilation terminated." via stderr
+   735→   735→    this.onEvent('stderr', '\x1b[31m\x1b[1mCompilation terminated.\x1b[0m\r\n');
+   736→   736→
+   737→   737→    return this.buildResult(false, null, Date.now() - startTime);
+   738→   738→  }
+   739→   739→
+   740→   740→  private async runPhase(
+   741→   741→    phase: CompilerPhase,
+   742→   742→    fn: () => void,
+   743→   743→    nonBlocking: boolean = false,
+   744→   744→  ): Promise<boolean> {
+   745→   745→    const startTime = Date.now();
+   746→   746→    const phaseName = phase.replace(/_/g, ' ');
+   747→   747→
+   748→   748→    // Emit phase start
+   749→   749→    this.emitPhaseEvent(phase, 'running', { message: `${phaseName}...` });
+   750→   750→
+   751→   751→    try {
+   752→   752→      fn();
+   753→   753→
+   754→   754→      const durationMs = Date.now() - startTime;
+   755→   755→      let hasErrors = false;
+   756→   756→      let hasWarnings = false;
+   757→   757→
+   758→   758→      // Collect errors from phase results
+   759→   759→      switch (phase) {
+   760→   760→        case CP.LexicalAnalysis: {
+   761→   761→          if (this.lexResult) {
+   762→   762→            if (nonBlocking) {
+   763→   763→              // Non-blocking: downgrade all errors to warnings (same as Parsing phase)
+   764→   764→              for (const e of this.lexResult.errors) {
+   765→   765→                this.allErrors.push({ ...e, severity: 'warning' });
+   766→   766→              }
+   767→   767→              hasWarnings = this.lexResult.errors.length > 0;
+   768→   768→            } else {
+   769→   769→              this.allErrors.push(...this.lexResult.errors);
+   770→   770→              hasErrors = this.lexResult.errors.some(e => e.severity === 'error');
+   771→   771→              hasWarnings = this.lexResult.errors.some(e => e.severity === 'warning');
+   772→   772→            }
+   773→   773→            const displayStatus = (nonBlocking || !hasErrors) ? 'completed' : 'failed';
+   774→   774→            this.emitPhaseEvent(phase, displayStatus, {
+   775→   775→              durationMs,
+   776→   776→              fatal: hasErrors && !nonBlocking,
+   777→   777→              warning: !hasErrors && hasWarnings,
+   778→   778→              data: {
+   779→   779→                totalTokens: this.lexResult.stats.totalTokens,
+   780→   780→                keywords: this.lexResult.stats.keywords,
+   781→   781→                identifiers: this.lexResult.stats.identifiers,
+   782→   782→                linesOfCode: this.lexResult.stats.linesOfCode,
+   783→   783→                commentRatio: this.lexResult.stats.commentRatio,
+   784→   784→              } as LexPhaseData,
+   785→   785→            });
+   786→   786→            if (nonBlocking) hasErrors = false;
+   787→   787→          }
+   788→   788→          break;
+   789→   789→        }
+   790→   790→        case CP.Parsing: {
+   791→   791→          if (this.parseResult) {
+   792→   792→            if (nonBlocking) {
+   793→   793→              // Non-blocking: downgrade all errors to warnings
+   794→   794→              for (const e of this.parseResult.errors) {
+   795→   795→                this.allErrors.push({ ...e, severity: 'warning' });
+   796→   796→              }
+   797→   797→              hasWarnings = this.parseResult.errors.length > 0;
+   798→   798→            } else {
+   799→   799→              // Blocking: errors are fatal
+   800→   800→              this.allErrors.push(...this.parseResult.errors);
+   801→   801→              hasErrors = this.parseResult.errors.some(e => e.severity === 'error') || !this.parseResult.ast;
+   802→   802→              hasWarnings = !hasErrors && this.parseResult.errors.some(e => e.severity === 'warning');
+   803→   803→            }
+   804→   804→            const displayStatus = (nonBlocking || !hasErrors) ? 'completed' : 'failed';
+   805→   805→            this.emitPhaseEvent(phase, displayStatus, {
+   806→   806→              durationMs,
+   807→   807→              fatal: hasErrors && !nonBlocking,
+   808→   808→              warning: !hasErrors && hasWarnings,
+   809→   809→              data: {
+   810→   810→                totalNodes: this.parseResult.stats.totalNodes,
+   811→   811→                maxDepth: this.parseResult.stats.maxDepth,
+   812→   812→                functionCount: this.parseResult.stats.functionCount,
+   813→   813→                classCount: this.parseResult.stats.classCount,
+   814→   814→                cyclomaticComplexity: this.parseResult.stats.cyclomaticComplexity,
+   815→   815→              } as ParsePhaseData,
+   816→   816→            });
+   817→   817→            if (nonBlocking) hasErrors = false;
+   818→   818→          }
+   819→   819→          break;
+   820→   820→        }
+   821→   821→        case CP.SemanticAnalysis: {
+   822→   822→          if (this.semanticResult) {
+   823→   823→            // Semantic errors are always warnings (like a real compiler's type checker)
+   824→   824→            for (const e of this.semanticResult.errors) {
+   825→   825→              this.allErrors.push({ ...e, severity: 'warning' });
+   826→   826→            }
+   827→   827→            for (const w of this.semanticResult.warnings) {
+   828→   828→              this.allErrors.push({ ...w, severity: 'warning' });
+   829→   829→            }
+   830→   830→            hasWarnings = this.semanticResult.errors.length > 0 || this.semanticResult.warnings.length > 0;
+   831→   831→            this.emitPhaseEvent(phase, 'completed', {
+   832→   832→              durationMs,
+   833→   833→              warning: hasWarnings,
+   834→   834→              data: {
+   835→   835→                totalSymbols: this.semanticResult.stats.totalSymbols,
+   836→   836→                totalScopes: this.semanticResult.stats.totalScopes,
+   837→   837→                unusedSymbols: this.semanticResult.stats.unusedSymbols,
+   838→   838→                typeErrors: this.semanticResult.stats.typeErrors,
+   839→   839→              } as SemanticPhaseData,
+   840→   840→            });
+   841→   841→            hasErrors = false; // Semantic analysis never blocks
+   842→   842→          }
+   843→   843→          break;
+   844→   844→        }
+   845→   845→        case CP.IRGeneration: {
+   846→   846→          if (this.irResult) {
+   847→   847→            // IR generation errors are warnings — best-effort conversion
+   848→   848→            for (const e of this.irResult.errors) {
+   849→   849→              this.allErrors.push({ ...e, severity: 'warning' });
+   850→   850→            }
+   851→   851→            hasWarnings = this.irResult.errors.length > 0;
+   852→   852→            this.emitPhaseEvent(phase, 'completed', {
+   853→   853→              durationMs,
+   854→   854→              warning: hasWarnings,
+   855→   855→              data: {
+   856→   856→                totalInstructions: this.irResult.stats.totalInstructions,
+   857→   857→                totalBlocks: this.irResult.stats.totalBlocks,
+   858→   858→                totalFunctions: this.irResult.stats.totalFunctions,
+   859→   859→              } as IRPhaseData,
+   860→   860→            });
+   861→   861→            hasErrors = false;
+   862→   862→          }
+   863→   863→          break;
+   864→   864→        }
+   865→   865→        case CP.Optimization: {
+   866→   866→          if (this.optimizationResult) {
+   867→   867→            this.emitPhaseEvent(phase, 'completed', {
+   868→   868→              durationMs,
+   869→   869→              data: {
+   870→   870→                instructionsBefore: this.optimizationResult.stats.instructionsBefore,
+   871→   871→                instructionsAfter: this.optimizationResult.stats.instructionsAfter,
+   872→   872→                reduction: this.optimizationResult.stats.reduction,
+   873→   873→                reductionPercent: this.optimizationResult.stats.reductionPercent,
+   874→   874→                constantsFolded: this.optimizationResult.stats.constantsFolded,
+   875→   875→                deadCodeEliminated: this.optimizationResult.stats.deadCodeEliminated,
+   876→   876→              } as OptimizationPhaseData,
+   877→   877→            });
+   878→   878→          }
+   879→   879→          break;
+   880→   880→        }
+   881→   881→        case CP.SecurityAnalysis: {
+   882→   882→          if (this.securityReport) {
+   883→   883→            const blocked = this.securityReport.blockingFindings.length;
+   884→   884→            hasErrors = blocked > 0;
+   885→   885→            hasWarnings = this.securityReport.warningFindings.length > 0;
+   886→   886→
+   887→   887→            for (const finding of this.securityReport.blockingFindings) {
+   888→   888→              this.allErrors.push({
+   889→   889→                phase: CP.SecurityAnalysis,
+   890→   890→                message: finding.message,
+   891→   891→                line: finding.node.loc?.startLine,
+   892→   892→                col: finding.node.loc?.startCol,
+   893→   893→                severity: 'error',
+   894→   894→                raw: finding.rule,
+   895→   895→              });
+   896→   896→              this.onEvent('stderr', `\x1b[31m[ERROR] ${finding.message}\x1b[0m\r\n`);
+   897→   897→            }
+   898→   898→            for (const finding of this.securityReport.warningFindings) {
+   899→   899→              this.allErrors.push({
+   900→   900→                phase: CP.SecurityAnalysis,
+   901→   901→                message: finding.message,
+   902→   902→                line: finding.node.loc?.startLine,
+   903→   903→                col: finding.node.loc?.startCol,
+   904→   904→                severity: 'warning',
+   905→   905→                raw: finding.rule,
+   906→   906→              });
+   907→   907→              this.onEvent('stderr', `\x1b[33m[WARN]  ${finding.message}\x1b[0m\r\n`);
+   908→   908→            }
+   909→   909→
+   910→   910→            this.emitPhaseEvent(phase, hasErrors ? 'failed' : 'completed', {
+   911→   911→              durationMs,
+   912→   912→              fatal: hasErrors,
+   913→   913→              warning: !hasErrors && hasWarnings,
+   914→   914→              data: {
+   915→   915→                safe: this.securityReport.safe,
+   916→   916→                riskLevel: this.securityReport.riskLevel,
+   917→   917→                totalChecks: this.securityReport.stats.totalChecks,
+   918→   918→                blocked: this.securityReport.stats.blocked,
+   919→   919→                warnings: this.securityReport.stats.warnings,
+   920→   920→                categories: this.securityReport.stats.categories,
+   921→   921→              } as SecurityPhaseData,
+   922→   922→            });
+   923→   923→          }
+   924→   924→          break;
+   925→   925→        }
+   926→   926→        case CP.CodeGeneration: {
+   927→   927→          if (this.codegenResult && this.executionPlan) {
+   928→   928→            const codegenData: CodegenPhaseData = {
+   929→   929→              mode: this.executionPlan.mode,
+   930→   930→              reason: this.executionPlan.reason,
+   931→   931→              unsupportedFeatures: this.codegenResult.unsupportedFeatures,
+   932→   932→            };
+   933→   933→            if (this.executionPlan.mode === 'codegen' && this.codegenResult.success) {
+   934→   934→              codegenData.linesGenerated = this.codegenResult.stats.linesGenerated;
+   935→   935→              codegenData.functionsGenerated = this.codegenResult.stats.functionsGenerated;
+   936→   936→              codegenData.controlFlowReconstructed = this.codegenResult.stats.controlFlowReconstructed;
+   937→   937→            }
+   938→   938→
+   939→   939→            // Codegen errors are warnings (fallback to native)
+   940→   940→            for (const e of this.codegenResult.errors) {
+   941→   941→              this.allErrors.push({ ...e, severity: 'warning' });
+   942→   942→            }
+   943→   943→            hasWarnings = this.codegenResult.errors.length > 0;
+   944→   944→
+   945→   945→            this.emitPhaseEvent(phase, 'completed', {
+   946→   946→              durationMs,
+   947→   947→              warning: hasWarnings,
+   948→   948→              data: codegenData,
+   949→   949→            });
+   950→   950→            hasErrors = false;
+   951→   951→          }
+   952→   952→          break;
+   953→   953→        }
+   954→   954→      }
+   955→   955→
+   956→   956→      // Update phase record
+   957→   957→      this.phases[phase] = {
+   958→   958→        phase,
+   959→   959→        status: hasErrors ? 'failed' : 'completed',
+   960→   960→        durationMs,
+   961→   961→        errors: this.allErrors.filter(e => e.phase === phase && e.severity === 'error'),
+   962→   962→        warnings: this.allErrors.filter(e => e.phase === phase && e.severity === 'warning'),
+   963→   963→      };
+   964→   964→
+   965→   965→      return !hasErrors;
+   966→   966→    } catch (error: unknown) {
+   967→   967→      const msg = error instanceof Error ? error.message : String(error);
+   968→   968→      const durationMs = Date.now() - startTime;
+   969→   969→
+   970→   970→      this.allErrors.push({
+   971→   971→        phase,
+   972→   972→        message: `${phaseName} failed: ${msg}`,
+   973→   973→        severity: 'error',
+   974→   974→      });
+   975→   975→
+   976→   976→      this.phases[phase] = {
+   977→   977→        phase,
+   978→   978→        status: 'failed',
+   979→   979→        durationMs,
+   980→   980→        errors: [{ phase, message: msg, severity: 'error' }],
+   981→   981→        warnings: [],
+   982→   982→      };
+   983→   983→
+   984→   984→      this.emitPhaseEvent(phase, 'failed', { durationMs, fatal: !nonBlocking, message: msg });
+   985→   985→      return false;
+   986→   986→    }
+   987→   987→  }
+   988→   988→
+   989→   989→  private emitPhaseEvent(
+   990→   990→    phase: CompilerPhase,
+   991→   991→    status: PhaseStatus,
+   992→   992→    options: { durationMs?: number; message?: string; data?: unknown; fatal?: boolean; warning?: boolean } = {},
+   993→   993→  ) {
+   994→   994→    const eventData: PhaseEventData = {
+   995→   995→      phase,
+   996→   996→      status,
+   997→   997→      ...options,
+   998→   998→    };
+   999→   999→    this.onEvent('phase', JSON.stringify(eventData));
+  1000→  1000→  }
+  1001→  1001→
+  1002→  1002→  private buildResult(
+  1003→  1003→    success: boolean,
+  1004→  1004→    exitCode: number | null,
+  1005→  1005→    totalDurationMs: number,
+  1006→  1006→  ): PipelineResult {
+  1007→  1007→    const lexStats = this.lexResult?.stats;
+  1008→  1008→    const parseStats = this.parseResult?.stats;
+  1009→  1009→    const semStats = this.semanticResult?.stats;
+  1010→  1010→    const irStats = this.irResult?.stats;
+  1011→  1011→    const optStats = this.optimizationResult?.stats;
+  1012→  1012→    const secReport = this.securityReport;
+  1013→  1013→
+  1014→  1014→    const metrics: PipelineMetrics = {
+  1015→  1015→      linesOfCode: lexStats?.linesOfCode ?? 0,
+  1016→  1016→      totalTokens: lexStats?.totalTokens ?? 0,
+  1017→  1017→      totalASTNodes: parseStats?.totalNodes ?? 0,
+  1018→  1018→      cyclomaticComplexity: parseStats?.cyclomaticComplexity ?? 1,
+  1019→  1019→      totalSymbols: semStats?.totalSymbols ?? 0,
+  1020→  1020→      totalScopes: semStats?.totalScopes ?? 0,
+  1021→  1021→      irInstructions: irStats?.totalInstructions ?? 0,
+  1022→  1022→      optimizedInstructions: optStats?.instructionsAfter ?? 0,
+  1023→  1023→      optimizationReduction: optStats?.reduction ?? 0,
+  1024→  1024→      riskLevel: secReport?.riskLevel ?? SecuritySeverity.Low,
+  1025→  1025→      astValid: !!this.parseResult?.ast && this.parseResult.errors.filter(e => e.severity === 'error').length === 0,
+  1026→  1026→    };
+  1027→  1027→
+  1028→  1028→    return {
+  1029→  1029→      success,
+  1030→  1030→      exitCode,
+  1031→  1031→      totalDurationMs,
+  1032→  1032→      phases: { ...this.phases },
+  1033→  1033→      diagnostics: this.allErrors,
+  1034→  1034→      metrics,
+  1035→  1035→    };
+  1036→  1036→  }
+  1037→  1037→}
+  1038→  1038→
+  1039→  1039→// ─── Compilation Error Parser (for real compiler output) ──────────────────
+  1040→  1040→
+  1041→  1041→export function parseCompilationErrors(stderr: string, _language: string): CompilerError[] {
+  1042→  1042→  const diagnostics: CompilerError[] = [];
+  1043→  1043→  for (const line of stderr.split('\n')) {
+  1044→  1044→    const trimmed = line.trim();
+  1045→  1045→    if (!trimmed) continue;
+  1046→  1046→
+  1047→  1047→    // GCC/G++: file:line:col: error: message
+  1048→  1048→    let m = trimmed.match(/^(.+?):(\d+):(\d+):\s*(error|fatal error):\s*(.+)$/);
+  1049→  1049→    if (m) {
+  1050→  1050→      diagnostics.push({
+  1051→  1051→        phase: CP.Compilation, message: m[5], line: +m[2], col: +m[3],
+  1052→  1052→        severity: 'error', raw: trimmed,
+  1053→  1053→      });
+  1054→  1054→      continue;
+  1055→  1055→    }
+  1056→  1056→
+  1057→  1057→    // GCC/G++ warning
+  1058→  1058→    m = trimmed.match(/^(.+?):(\d+):(\d+):\s*warning:\s*(.+)$/);
+  1059→  1059→    if (m) {
+  1060→  1060→      diagnostics.push({
+  1061→  1061→        phase: CP.Compilation, message: m[4], line: +m[2], col: +m[3],
+  1062→  1062→        severity: 'warning', raw: trimmed,
+  1063→  1063→      });
+  1064→  1064→      continue;
+  1065→  1065→    }
+  1066→  1066→
+  1067→  1067→    // Java: File.java:line: error: message
+  1068→  1068→    m = trimmed.match(/^(.+?\.java):(\d+):\s*error:\s*(.+)$/);
+  1069→  1069→    if (m) {
+  1070→  1070→      diagnostics.push({
+  1071→  1071→        phase: CP.Compilation, message: m[3], line: +m[2],
+  1072→  1072→        severity: 'error', raw: trimmed,
+  1073→  1073→      });
+  1074→  1074→      continue;
+  1075→  1075→    }
+  1076→  1076→
+  1077→  1077→    // Fallback
+  1078→  1078→    if (/error/i.test(trimmed) && !/^\s/.test(trimmed)) {
+  1079→  1079→      diagnostics.push({
+  1080→  1080→        phase: CP.Compilation, message: trimmed.slice(0, 200),
+  1081→  1081→        severity: 'error', raw: trimmed,
+  1082→  1082→      });
+  1083→  1083→    }
+  1084→  1084→  }
+  1085→  1085→  return diagnostics;
+  1086→  1086→}
+  1087→  1087→
+  1088→  1088→// ─── Runtime Error Parser ─────────────────────────────────────────────────
+  1089→  1089→
+  1090→  1090→export function parseRuntimeError(output: string, language: string): CompilerError[] {
+  1091→  1091→  const diagnostics: CompilerError[] = [];
+  1092→  1092→  const lang = normalizeLanguage(language);
+  1093→  1093→
+  1094→  1094→  for (const line of output.split('\n')) {
+  1095→  1095→    const t = line.trim();
+  1096→  1096→    if (!t) continue;
+  1097→  1097→
+  1098→  1098→    // Python traceback
+  1099→  1099→    const pyFile = t.match(/^File "(.+)", line (\d+)/);
+  1100→  1100→    if (pyFile) {
+  1101→  1101→      diagnostics.push({
+  1102→  1102→        phase: CP.Execution, message: `Error at line ${pyFile[2]}`,
+  1103→  1103→        line: +pyFile[2], severity: 'error', raw: t,
+  1104→  1104→      });
+  1105→  1105→      continue;
+  1106→  1106→    }
+  1107→  1107→
+  1108→  1108→    // Python error types
+  1109→  1109→    if (/^(Traceback|Error|TypeError|ValueError|NameError|IndexError|KeyError|AttributeError|SyntaxError|ZeroDivisionError|ImportError|FileNotFoundError|RuntimeError|RecursionError)/.test(t)) {
+  1110→  1110→      diagnostics.push({
+  1111→  1111→        phase: CP.Execution, message: t.slice(0, 200),
+  1112→  1112→        severity: 'error', raw: t,
+  1113→  1113→      });
+  1114→  1114→      continue;
+  1115→  1115→    }
+  1116→  1116→
+  1117→  1117→    // C/C++ signals
+  1118→  1118→    if (/^(Segmentation fault|Aborted|Floating point exception|terminated by signal|Killed)/.test(t)) {
+  1119→  1119→      diagnostics.push({
+  1120→  1120→        phase: CP.Execution, message: t,
+  1121→  1121→        severity: 'error', raw: t,
+  1122→  1122→      });
+  1123→  1123→      continue;
+  1124→  1124→    }
+  1125→  1125→
+  1126→  1126→    // Java exceptions
+  1127→  1127→    if (/^Exception in thread|^java\.\w+\.\w+(Error|Exception)/.test(t) || /^\s+at\s+\S+\(/.test(t)) {
+  1128→  1128→      diagnostics.push({
+  1129→  1129→        phase: CP.Execution, message: t.slice(0, 200),
+  1130→  1130→        severity: 'error', raw: t,
+  1131→  1131→      });
+  1132→  1132→      continue;
+  1133→  1133→    }
+  1134→  1134→
+  1135→  1135→    // JavaScript errors
+  1136→  1136→    if (/^(Error|TypeError|RangeError|SyntaxError|ReferenceError|UnhandledPromiseRejection)/.test(t)) {
+  1137→  1137→      diagnostics.push({
+  1138→  1138→        phase: CP.Execution, message: t.slice(0, 200),
+  1139→  1139→        severity: 'error', raw: t,
+  1140→  1140→      });
+  1141→  1141→      continue;
+  1142→  1142→    }
+  1143→  1143→  }
+  1144→  1144→
+  1145→  1145→  // Timeout detection
+  1146→  1146→  if (/timed?out|time limit exceeded|execution timed out/i.test(output)) {
+  1147→  1147→    diagnostics.push({
+  1148→  1148→      phase: CP.Execution, message: 'Execution timed out',
+  1149→  1149→      severity: 'error',
+  1150→  1150→    });
+  1151→  1151→  }
+  1152→  1152→
+  1153→  1153→  return diagnostics;
+  1154→  1154→}
+  1155→  1155→

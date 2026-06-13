@@ -159,15 +159,15 @@ export function Toolbar() {
     if (!activeTab || isExecuting) return;
 
     // ─── Check for syntax errors before executing ──────────────────────
-    // If the code has error-level diagnostics, show them in the terminal
-    // and navigate to the first error. The user can still force-run by
-    // clicking Run again within 3 seconds (the errors may be stale from
-    // a previous code state).
+    // If the code has error-level diagnostics, show a concise summary in
+    // the terminal (NOT the full error list — that belongs in the Problems
+    // panel). Navigate to the first error. The user can still force-run by
+    // clicking Run again within 3 seconds.
     const { diagnostics } = useIDEStore.getState();
     const errors = diagnostics.filter(d => d.severity === 'error');
 
     if (errors.length > 0 && !forceRunRef.current) {
-      // Show errors in terminal with jump-to-error links
+      // Show concise error summary in terminal (VS Code behavior)
       setTerminalOpen(true);
       const store = useIDEStore.getState();
 
@@ -181,22 +181,19 @@ export function Toolbar() {
         if (store.settings.terminalClearOnRun) {
           store.clearTerminal();
         }
+
+        const errorCount = errors.length;
+        const errorWord = errorCount === 1 ? 'Error' : 'Errors';
+
         store.writeToTerminal(
-          ANSI.RED + ANSI.BOLD + 'Compilation Error:' + ANSI.RESET + '\r\n'
+          ANSI.RED + ANSI.BOLD + 'Compilation failed.' + ANSI.RESET + '\r\n'
         );
-
-        for (const err of errors.slice(0, 10)) {
-          store.writeToTerminal(
-            ANSI.RED + `  Line ${err.line}, Col ${err.column}: ${err.message}` + ANSI.RESET + '\r\n'
-          );
-        }
-
-        if (errors.length > 10) {
-          store.writeToTerminal(
-            ANSI.DIM + `  ... and ${errors.length - 10} more errors` + ANSI.RESET + '\r\n'
-          );
-        }
-
+        store.writeToTerminal(
+          ANSI.RED + `${errorCount} ${errorWord} found.` + ANSI.RESET + '\r\n'
+        );
+        store.writeToTerminal(
+          ANSI.DIM + 'See Problems panel for details.' + ANSI.RESET + '\r\n'
+        );
         store.writeToTerminal(
           '\r\n' + ANSI.YELLOW + 'Fix the errors or press Run again to force execution.' + ANSI.RESET + '\r\n'
         );
@@ -210,6 +207,14 @@ export function Toolbar() {
             lineNumber: firstError.line,
             column: firstError.column,
           });
+          // Highlight the error range temporarily
+          const monaco = (window as any).monaco;
+          if (monaco && firstError.endColumn > firstError.column) {
+            editor.setSelection(new monaco.Range(
+              firstError.line, firstError.column,
+              firstError.endLine || firstError.line, firstError.endColumn
+            ));
+          }
           editor.focus();
         }
       });

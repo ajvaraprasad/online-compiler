@@ -130,15 +130,16 @@ async function validatePython(code: string): Promise<Diagnostic[]> {
 
   if (result.exitCode === 0) return [];
 
-  return parsePythonErrors(result.stderr);
+  return parsePythonErrors(result.stderr, code);
 }
 
-function parsePythonErrors(stderr: string): Diagnostic[] {
+function parsePythonErrors(stderr: string, code: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const lines = stderr.split('\n');
 
   let currentLine = 1;
   let currentMessage = '';
+  let currentCol: number | undefined;
   let currentSeverity: Diagnostic['severity'] = 'error';
 
   for (const line of lines) {
@@ -146,6 +147,7 @@ function parsePythonErrors(stderr: string): Diagnostic[] {
     const lineMatch = line.match(/File ["']<string>["'],\s*line\s+(\d+)/);
     if (lineMatch) {
       currentLine = parseInt(lineMatch[1], 10);
+      currentCol = undefined;
       continue;
     }
 
@@ -154,27 +156,80 @@ function parsePythonErrors(stderr: string): Diagnostic[] {
     if (errorMatch) {
       currentMessage = errorMatch[2].trim() || errorMatch[1];
       currentSeverity = 'error';
-      diagnostics.push({
-        message: currentMessage,
-        line: currentLine,
-        column: 1,
-        severity: currentSeverity,
-        source: 'python',
-      });
       continue;
     }
 
     // Match:   Warning: message  (less common but handle it)
     const warningMatch = line.match(/^Warning:\s*(.*)/i);
     if (warningMatch) {
+      currentMessage = warningMatch[1].trim();
+      currentSeverity = 'warning';
+      continue;
+    }
+
+    // Match the Python caret line:   ^^^
+    // Python outputs the source line, then a caret line pointing to the exact column.
+    // The caret position tells us the precise column of the error.
+    // We detect this by finding a line that consists primarily of spaces and ^ characters.
+    const caretMatch = line.match(/^(\s*)(\^+)/);
+    if (caretMatch) {
+      // The column is the position of the first ^ (1-based)
+      currentCol = caretMatch[1].length + 1;
+      continue;
+    }
+
+    // Empty line can signal the end of an error block
+    if (line.trim() === '' && currentMessage) {
+      // Determine end column from code if we have a start column
+      const codeLines = code.split('\n');
+      const targetLine = codeLines[currentLine - 1] || '';
+      let endCol = (currentCol || 1) + 1;
+      if (currentCol && currentCol <= targetLine.length) {
+        // Extend to end of word or token at error position
+        const rest = targetLine.slice(currentCol - 1);
+        const wordMatch = rest.match(/^(\S+)/);
+        if (wordMatch) {
+          endCol = currentCol + wordMatch[1].length - 1;
+        }
+      }
+
       diagnostics.push({
-        message: warningMatch[1].trim(),
+        message: currentMessage,
         line: currentLine,
-        column: 1,
-        severity: 'warning',
+        column: currentCol || 1,
+        endLine: currentLine,
+        endColumn: endCol,
+        severity: currentSeverity,
         source: 'python',
       });
+      currentMessage = '';
+      currentCol = undefined;
+      continue;
     }
+  }
+
+  // Handle the last error if stderr doesn't end with an empty line
+  if (currentMessage) {
+    const codeLines = code.split('\n');
+    const targetLine = codeLines[currentLine - 1] || '';
+    let endCol = (currentCol || 1) + 1;
+    if (currentCol && currentCol <= targetLine.length) {
+      const rest = targetLine.slice(currentCol - 1);
+      const wordMatch = rest.match(/^(\S+)/);
+      if (wordMatch) {
+        endCol = currentCol + wordMatch[1].length - 1;
+      }
+    }
+
+    diagnostics.push({
+      message: currentMessage,
+      line: currentLine,
+      column: currentCol || 1,
+      endLine: currentLine,
+      endColumn: endCol,
+      severity: currentSeverity,
+      source: 'python',
+    });
   }
 
   return diagnostics;
@@ -367,7 +422,9 @@ function parseJavaErrors(output: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const lines = output.split('\n');
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
     // Java format: Main.java:line: error: message
     //              Main.java:line: warning: message
     const javaRegex = /^Main\.java:(\d+):\s*(error|warning):\s*(.*)/;
@@ -377,10 +434,34 @@ function parseJavaErrors(output: string): Diagnostic[] {
       const severity = match[2] === 'warning' ? 'warning' as const : 'error' as const;
       const message = match[3].trim();
 
+      // Java sometimes provides a caret line after the source line
+      // Look ahead for a caret line to determine the column
+      let col = 1;
+      let endCol = 2;
+
+      // The structure is: error line, source line, caret line
+      // So caret should be at i+2 (if i+1 is the source line)
+      if (i + 2 < lines.length) {
+        const caretLine = lines[i + 2];
+        const caretMatch = caretLine.match(/^(\s*)\^/);
+        if (caretMatch) {
+          col = caretMatch[1].length + 1;
+          // Try to find the extent of the caret
+          const caretExtent = caretLine.slice(caretMatch[1].length).match(/^(\^+)/);
+          if (caretExtent) {
+            endCol = col + caretExtent[1].length - 1;
+          } else {
+            endCol = col + 1;
+          }
+        }
+      }
+
       diagnostics.push({
         message,
         line: ln,
-        column: 1,
+        column: col,
+        endLine: ln,
+        endColumn: endCol,
         severity,
         source: 'javac',
       });

@@ -11,6 +11,7 @@ import {
   Wifi,
   WifiOff,
   Loader2,
+  Lightbulb,
 } from 'lucide-react';
 
 interface StatusBarProps {
@@ -42,6 +43,7 @@ export function StatusBar({ isConnected }: StatusBarProps) {
   // Diagnostic counts
   const errorCount = diagnostics.filter(d => d.severity === 'error').length;
   const warningCount = diagnostics.filter(d => d.severity === 'warning').length;
+  const hintCount = diagnostics.filter(d => d.severity === 'hint').length;
 
   return (
     <div
@@ -86,7 +88,19 @@ export function StatusBar({ isConnected }: StatusBarProps) {
               <span className="text-[10px]" style={{ color: 'var(--ide-warning)' }}>{warningCount}</span>
             </div>
           ) : null}
-          {errorCount === 0 && warningCount === 0 && activeTab ? (
+          {hintCount > 0 ? (
+            <div
+              className="ide-status-item flex items-center gap-1"
+              onClick={() => {
+                const { toggleProblemsPanel } = useIDEStore.getState();
+                toggleProblemsPanel();
+              }}
+            >
+              <Lightbulb className="h-3 w-3" style={{ color: 'var(--ide-hint, #94e2d5)' }} />
+              <span className="text-[10px]" style={{ color: 'var(--ide-hint, #94e2d5)' }}>{hintCount}</span>
+            </div>
+          ) : null}
+          {errorCount === 0 && warningCount === 0 && hintCount === 0 && activeTab ? (
             <div className="flex items-center gap-1">
               <CheckCircle className="h-3 w-3" style={{ color: 'var(--ide-success)' }} />
               <span className="text-[10px]" style={{ color: 'var(--ide-text-dim)' }}>No issues</span>

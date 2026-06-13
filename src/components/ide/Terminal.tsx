@@ -113,11 +113,30 @@ function navigateEditorToLine(lineNumber: number, column?: number) {
       column: column || 1,
     });
 
+    // Try to select the error range if we have the column
+    const monaco = (window as any).monaco;
+    if (monaco && column && column > 1) {
+      // Try to find a marker at this position and select its range
+      const model = editor.getModel();
+      if (model) {
+        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+        const matchingMarker = markers.find((m: any) =>
+          m.startLineNumber === lineNumber &&
+          Math.abs(m.startColumn - column) <= 2
+        );
+        if (matchingMarker) {
+          editor.setSelection(new monaco.Range(
+            matchingMarker.startLineNumber, matchingMarker.startColumn,
+            matchingMarker.endLineNumber, matchingMarker.endColumn
+          ));
+        }
+      }
+    }
+
     // Focus the editor
     editor.focus();
 
     // Temporarily highlight the line with a decoration that fades after 3s
-    const monaco = (window as any).monaco;
     if (monaco) {
       const decorations = editor.deltaDecorations([], [{
         range: new monaco.Range(lineNumber, 1, lineNumber, 1),
@@ -204,6 +223,18 @@ function registerErrorLinkProvider(xterm: XTerm) {
             underline: true,
           },
           activate(_event: MouseEvent, _text: string): void {
+            // Check if this is a "Problems panel" link
+            if ((parsed as any).isProblemsLink) {
+              // Open the Problems panel and focus the first diagnostic
+              const store = useIDEStore.getState();
+              store.setProblemsPanelOpen(true);
+              // Navigate to the first error
+              const firstError = store.diagnostics.find(d => d.severity === 'error');
+              if (firstError) {
+                navigateEditorToLine(firstError.line, firstError.column);
+              }
+              return;
+            }
             navigateEditorToLine(parsed.line, parsed.column);
           },
           hover(event: MouseEvent, _text: string): void {
@@ -212,7 +243,11 @@ function registerErrorLinkProvider(xterm: XTerm) {
             if (!terminalEl) return;
 
             const tooltip = getOrCreateTooltip(terminalEl);
-            tooltip.textContent = `Click to go to line ${parsed.line}${parsed.column ? `:${parsed.column}` : ''}`;
+            if ((parsed as any).isProblemsLink) {
+              tooltip.textContent = 'Click to open Problems panel';
+            } else {
+              tooltip.textContent = `Click to go to line ${parsed.line}${parsed.column ? `:${parsed.column}` : ''}`;
+            }
             tooltip.style.display = 'block';
 
             // Position relative to the terminal element
