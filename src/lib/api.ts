@@ -214,7 +214,9 @@ export const LANGUAGE_NAMES: Record<string, string> = {
   javascript: 'JavaScript',
 };
 
-export const DEFAULT_CODE: Record<string, string> = {
+// Code templates — available for optional "Insert Template" action, NOT auto-injected into new files.
+// New files are always created empty (VS Code behavior).
+export const CODE_TEMPLATES: Record<string, string> = {
   python: `# Python Program
 # Type input directly in the terminal when program is running
 # Or click STDIN button to pre-provide input
@@ -290,3 +292,6 @@ function main() {
 main();
 `,
 };
+
+// Backward-compatible alias — prefer CODE_TEMPLATES for clarity
+export const DEFAULT_CODE = CODE_TEMPLATES;

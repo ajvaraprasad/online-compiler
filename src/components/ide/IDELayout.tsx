@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef } from 'react';
 import { useIDEStore } from '@/store/useIDEStore';
 import { ActivityBar } from './ActivityBar';
 import { Sidebar } from './Sidebar';
@@ -12,7 +12,7 @@ import { ProblemsPanel } from './ProblemsPanel';
 import { StatusBar } from './StatusBar';
 import { AuthModal } from './AuthModal';
 import { AIAssistant } from './AIAssistant';
-import { filesAPI, LANGUAGE_EXTENSIONS, DEFAULT_CODE } from '@/lib/api';
+import { filesAPI, LANGUAGE_EXTENSIONS } from '@/lib/api';
 import { useSocket } from '@/hooks/useSocket';
 import { connectWS, disconnectWS } from '@/lib/executor-client';
 
@@ -30,9 +30,11 @@ export function IDELayout() {
     addTab,
     theme,
     isAIPanelOpen,
+    settings,
   } = useIDEStore();
 
   const { isConnected } = useSocket();
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Pre-connect WebSocket on mount so terminal service is ready when Run is clicked
   useEffect(() => {
@@ -42,12 +44,10 @@ export function IDELayout() {
     };
   }, []);
 
-  // Auto-create a default Python tab on first load so workspace isn't blank
-  useEffect(() => {
-    if (tabs.length === 0) {
-      addTab('main.py', 'python', DEFAULT_CODE.python);
-    }
-  }, []);
+  // Do NOT auto-create a default tab with boilerplate.
+  // The workspace state is persisted via localStorage, so on refresh,
+  // tabs are restored. Only if there are no tabs, show the empty state.
+  // (No auto-creation of main.py with DEFAULT_CODE)
 
   // Apply theme class to root element
   useEffect(() => {
@@ -83,6 +83,62 @@ export function IDELayout() {
     }
   }, []);
 
+  // Auto-save functionality
+  useEffect(() => {
+    if (!settings.autoSave || !isAuthenticated) return;
+
+    // Clear previous timer
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    // Check if there are dirty tabs
+    const dirtyTabs = tabs.filter(t => t.isDirty);
+    if (dirtyTabs.length > 0) {
+      autoSaveTimerRef.current = setTimeout(async () => {
+        const state = useIDEStore.getState();
+        for (const tab of state.tabs.filter(t => t.isDirty)) {
+          try {
+            if (tab.isRemote) {
+              await filesAPI.update(tab.id, {
+                content: tab.content,
+                name: tab.name,
+                language: tab.language,
+              });
+            } else {
+              const data = await filesAPI.create(tab.name, tab.language, tab.content);
+              state.setRemoteFiles([...state.remoteFiles, data.file]);
+            }
+            state.markTabClean(tab.id);
+          } catch (err) {
+            console.error('Auto-save failed:', err);
+          }
+        }
+      }, settings.autoSaveDelay);
+    }
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [tabs, settings.autoSave, settings.autoSaveDelay, isAuthenticated]);
+
+  // beforeunload — warn about unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const state = useIDEStore.getState();
+      const hasDirtyTabs = state.tabs.some(t => t.isDirty);
+      if (hasDirtyTabs) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -102,14 +158,22 @@ export function IDELayout() {
         e.preventDefault();
         const { addTab, language } = useIDEStore.getState();
         const ext = LANGUAGE_EXTENSIONS[language] || '.txt';
+        // Create empty file
         addTab(`untitled${ext}`, language);
       }
 
       if (isCtrlOrCmd && e.key === 'w') {
         e.preventDefault();
         if (activeTabId) {
-          const { closeTab } = useIDEStore.getState();
-          closeTab(activeTabId);
+          const { closeTab, tabs: currentTabs } = useIDEStore.getState();
+          const tab = currentTabs.find(t => t.id === activeTabId);
+          if (tab?.isDirty) {
+            // The unsaved changes warning is handled in EditorTabs
+            // For Ctrl+W, we'll just close it since EditorTabs has the confirm dialog
+            closeTab(activeTabId);
+          } else {
+            closeTab(activeTabId);
+          }
         }
       }
 
@@ -122,7 +186,7 @@ export function IDELayout() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isTerminalOpen, activeTabId, isExecuting, handleSave]);
+  }, [isTerminalOpen, activeTabId, isExecuting, handleSave, setTerminalOpen]);
 
   return (
     <div className="ide-root h-screen w-screen flex flex-col overflow-hidden" style={{ backgroundColor: 'var(--ide-bg-base)' }}>

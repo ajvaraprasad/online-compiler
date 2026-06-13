@@ -251,6 +251,7 @@ export function Terminal() {
     setExecuting,
     setCurrentRequestId,
     setTerminalWriter,
+    settings,
   } = useIDEStore();
 
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -285,10 +286,11 @@ export function Terminal() {
 
     console.log('[Terminal] Creating xterm instance');
 
+    const { settings: currentSettings } = useIDEStore.getState();
     const xterm = new XTerm({
-      cursorBlink: true,
+      cursorBlink: currentSettings.terminalCursorBlink,
       cursorStyle: 'bar',
-      fontSize: 13,
+      fontSize: currentSettings.terminalFontSize,
       fontFamily: "'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace",
       fontWeight: 'normal',
       fontWeightBold: 'bold',
@@ -582,6 +584,14 @@ export function Terminal() {
       observer.disconnect();
     };
   }, [isTerminalOpen, isMaximized]);
+
+  // React to terminal settings changes
+  useEffect(() => {
+    const xterm = xtermRef.current;
+    if (!xterm || !isInitializedRef.current) return;
+    xterm.options.cursorBlink = settings.terminalCursorBlink;
+    xterm.options.fontSize = settings.terminalFontSize;
+  }, [settings.terminalCursorBlink, settings.terminalFontSize]);
 
   // ─── Clear terminal ──────────────────────────────────────────────────────
 

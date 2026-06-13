@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useIDEStore, type FileItem, type FolderItem } from '@/store/useIDEStore';
-import { filesAPI, foldersAPI, LANGUAGE_EXTENSIONS, LANGUAGE_NAMES, DEFAULT_CODE } from '@/lib/api';
+import { filesAPI, foldersAPI, LANGUAGE_EXTENSIONS, LANGUAGE_NAMES, CODE_TEMPLATES } from '@/lib/api';
 import {
   ChevronRight,
   ChevronDown,
@@ -14,6 +14,7 @@ import {
   Trash2,
   Pencil,
   RefreshCw,
+  FilePlus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +38,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 
 // Language icons mapping
 const LANGUAGE_COLORS: Record<string, string> = {
@@ -64,6 +74,7 @@ export function Sidebar() {
     remoteFiles,
     setRemoteFiles,
     removeRemoteFile,
+    updateRemoteFile,
     openAuthModal,
     folders,
     setFolders,
@@ -71,6 +82,11 @@ export function Sidebar() {
     removeFolder,
     updateFolder,
     toggleFolderExpanded,
+    closeTab,
+    updateTabContent,
+    settings,
+    updateSettings,
+    theme,
   } = useIDEStore();
 
   const [isExpanded, setIsExpanded] = useState(true);
@@ -82,9 +98,10 @@ export function Sidebar() {
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
   const [isRenameDialog, setIsRenameDialog] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: 'folder' } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: 'file' | 'folder' } | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<{ id: string; name: string; type: 'file' | 'folder' } | null>(null);
 
   // Load remote files and folders
   const loadData = useCallback(async () => {
@@ -133,7 +150,8 @@ export function Sidebar() {
     try {
       const ext = LANGUAGE_EXTENSIONS[newFileLanguage] || '.txt';
       const name = newFileName.includes('.') ? newFileName : newFileName + ext;
-      const content = DEFAULT_CODE[newFileLanguage] || '';
+      // New files are EMPTY — VS Code behavior
+      const content = '';
 
       if (isAuthenticated) {
         // Create as remote file (saved to server)
@@ -150,20 +168,61 @@ export function Sidebar() {
     }
   };
 
-  const handleDeleteFile = async (fileId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteFile = async (fileId: string) => {
     try {
-      await filesAPI.delete(fileId);
+      if (isAuthenticated) {
+        await filesAPI.delete(fileId);
+      }
       removeRemoteFile(fileId);
+      // Also close the tab if it's open
+      const tab = tabs.find(t => t.id === fileId);
+      if (tab) {
+        closeTab(fileId);
+      }
     } catch (err) {
       console.error('Failed to delete file:', err);
+    }
+  };
+
+  const handleRenameFile = async () => {
+    if (!renameTarget || !renameValue.trim()) return;
+    try {
+      if (renameTarget.type === 'file') {
+        if (isAuthenticated) {
+          const data = await filesAPI.update(renameTarget.id, { name: renameValue.trim() });
+          updateRemoteFile(renameTarget.id, { name: data.file.name });
+        } else {
+          updateRemoteFile(renameTarget.id, { name: renameValue.trim() });
+        }
+        // Also update the tab name
+        const tab = tabs.find(t => t.id === renameTarget.id);
+        if (tab) {
+          const { setLanguage: _sl } = useIDEStore.getState();
+          // Update tab name directly via store
+          useIDEStore.setState(state => ({
+            tabs: state.tabs.map(t =>
+              t.id === renameTarget.id ? { ...t, name: renameValue.trim() } : t
+            ),
+          }));
+        }
+      } else {
+        if (isAuthenticated) {
+          const data = await foldersAPI.update(renameTarget.id, { name: renameValue.trim() });
+          updateFolder(renameTarget.id, { name: data.folder.name });
+        } else {
+          updateFolder(renameTarget.id, { name: renameValue.trim() });
+        }
+      }
+      setIsRenameDialog(false);
+      setRenameTarget(null);
+    } catch (err) {
+      console.error('Failed to rename:', err);
     }
   };
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     if (!isAuthenticated) {
-      // Create a local-only folder (not persisted to server)
       const localFolder: FolderItem = {
         id: `local_folder_${Date.now()}`,
         name: newFolderName.trim(),
@@ -187,30 +246,28 @@ export function Sidebar() {
     }
   };
 
-  const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteFolder = async (folderId: string) => {
     try {
-      await foldersAPI.delete(folderId);
+      if (isAuthenticated) {
+        await foldersAPI.delete(folderId);
+      }
       removeFolder(folderId);
-      // Also remove files that were in this folder
+      // Also remove files that were in this folder and close their tabs
       const filesInFolder = remoteFiles.filter(f => f.folderId === folderId);
       for (const file of filesInFolder) {
         removeRemoteFile(file.id);
+        const tab = tabs.find(t => t.id === file.id);
+        if (tab) closeTab(file.id);
       }
     } catch (err) {
       console.error('Failed to delete folder:', err);
     }
   };
 
-  const handleRenameFolder = async () => {
-    if (!renameTarget || !renameValue.trim()) return;
-    try {
-      const data = await foldersAPI.update(renameTarget.id, { name: renameValue.trim() });
-      updateFolder(renameTarget.id, { name: data.folder.name });
-      setIsRenameDialog(false);
-      setRenameTarget(null);
-    } catch (err) {
-      console.error('Failed to rename folder:', err);
+  const handleInsertTemplate = (tabId: string, language: string) => {
+    const template = CODE_TEMPLATES[language];
+    if (template) {
+      updateTabContent(tabId, template);
     }
   };
 
@@ -228,118 +285,203 @@ export function Sidebar() {
       <>
         {childFolders.map(folder => (
           <div key={folder.id}>
-            <div
-              role="button"
-              tabIndex={0}
-              className={`
-                ide-file-item
-                w-full flex items-center gap-1 text-sm group
-              `}
-              style={{ paddingLeft: `${12 + depth * 16}px`, paddingTop: '4px', paddingBottom: '4px' }}
-              onClick={() => toggleFolderExpanded(folder.id)}
-              onKeyDown={(e) => { if (e.key === 'Enter') toggleFolderExpanded(folder.id); }}
-            >
-              {folder.isExpanded ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--ide-text-muted)' }} />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--ide-text-muted)' }} />
-              )}
-              {folder.isExpanded ? (
-                <FolderOpen className="h-4 w-4 shrink-0" style={{ color: 'var(--ide-accent)' }} />
-              ) : (
-                <Folder className="h-4 w-4 shrink-0" style={{ color: 'var(--ide-accent)' }} />
-              )}
-              <span className="truncate flex-1 text-left text-xs" style={{ color: 'var(--ide-text-secondary)' }}>
-                {folder.name}
-              </span>
-              {/* Folder action buttons — visible on hover */}
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ide-icon-btn h-5 w-5"
-                  style={{ color: 'var(--ide-text-dim)' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleNewFile(folder.id);
-                  }}
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={`
+                    ide-file-item
+                    w-full flex items-center gap-1 text-sm group
+                  `}
+                  style={{ paddingLeft: `${12 + depth * 16}px`, paddingTop: '4px', paddingBottom: '4px' }}
+                  onClick={() => toggleFolderExpanded(folder.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') toggleFolderExpanded(folder.id); }}
                 >
-                  <Plus className="h-3 w-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ide-icon-btn h-5 w-5"
-                  style={{ color: 'var(--ide-text-dim)' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  {folder.isExpanded ? (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--ide-text-muted)' }} />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--ide-text-muted)' }} />
+                  )}
+                  {folder.isExpanded ? (
+                    <FolderOpen className="h-4 w-4 shrink-0" style={{ color: 'var(--ide-accent)' }} />
+                  ) : (
+                    <Folder className="h-4 w-4 shrink-0" style={{ color: 'var(--ide-accent)' }} />
+                  )}
+                  <span className="truncate flex-1 text-left text-xs" style={{ color: 'var(--ide-text-secondary)' }}>
+                    {folder.name}
+                  </span>
+                  {/* Folder action buttons — visible on hover */}
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ide-icon-btn h-5 w-5"
+                      style={{ color: 'var(--ide-text-dim)' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleNewFile(folder.id);
+                      }}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ide-icon-btn h-5 w-5"
+                      style={{ color: 'var(--ide-text-dim)' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setNewFolderParentId(folder.id);
+                        setNewFolderName('');
+                        setIsNewFolderDialog(true);
+                      }}
+                    >
+                      <FolderPlus className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ide-icon-btn h-5 w-5"
+                      style={{ color: 'var(--ide-text-dim)' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRenameTarget({ id: folder.id, name: folder.name, type: 'folder' });
+                        setRenameValue(folder.name);
+                        setIsRenameDialog(true);
+                      }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ide-icon-btn h-5 w-5"
+                      style={{ color: 'var(--ide-text-dim)' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDeleteTarget({ id: folder.id, name: folder.name, type: 'folder' });
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-error)'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent
+                className="border shadow-lg"
+                style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)' }}
+              >
+                <ContextMenuItem
+                  className="text-xs cursor-pointer"
+                  style={{ color: 'var(--ide-text-primary)' }}
+                  onClick={() => handleNewFile(folder.id)}
+                >
+                  <FilePlus className="h-3.5 w-3.5 mr-2" />
+                  New File
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer"
+                  style={{ color: 'var(--ide-text-primary)' }}
+                  onClick={() => {
                     setNewFolderParentId(folder.id);
                     setNewFolderName('');
                     setIsNewFolderDialog(true);
                   }}
                 >
-                  <FolderPlus className="h-3 w-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ide-icon-btn h-5 w-5"
-                  style={{ color: 'var(--ide-text-dim)' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  <FolderPlus className="h-3.5 w-3.5 mr-2" />
+                  New Folder
+                </ContextMenuItem>
+                <ContextMenuSeparator style={{ backgroundColor: 'var(--ide-border)' }} />
+                <ContextMenuItem
+                  className="text-xs cursor-pointer"
+                  style={{ color: 'var(--ide-text-primary)' }}
+                  onClick={() => {
                     setRenameTarget({ id: folder.id, name: folder.name, type: 'folder' });
                     setRenameValue(folder.name);
                     setIsRenameDialog(true);
                   }}
                 >
-                  <Pencil className="h-3 w-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ide-icon-btn h-5 w-5"
-                  style={{ color: 'var(--ide-text-dim)' }}
-                  onClick={(e) => handleDeleteFolder(folder.id, e)}
-                  onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-error)'}
-                  onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+                  <Pencil className="h-3.5 w-3.5 mr-2" />
+                  Rename
+                </ContextMenuItem>
+                <ContextMenuItem
+                  className="text-xs cursor-pointer"
+                  style={{ color: 'var(--ide-error)' }}
+                  onClick={() => setConfirmDeleteTarget({ id: folder.id, name: folder.name, type: 'folder' })}
                 >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
+                  <Trash2 className="h-3.5 w-3.5 mr-2" />
+                  Delete
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
             {/* Render children if expanded */}
             {folder.isExpanded && renderFolderTree(folder.id, depth + 1)}
           </div>
         ))}
         {/* Files in this folder */}
         {filesInFolder.map(file => (
-          <div
-            key={file.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => handleOpenRemoteFile(file)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleOpenRemoteFile(file); }}
-            className={`
-              ide-file-item
-              w-full flex items-center gap-2 text-sm group
-              ${activeTabId === file.id ? 'bg-[var(--ide-bg-hover)] text-[var(--ide-text-primary)]' : 'text-[var(--ide-text-secondary)]'}
-            `}
-            style={{ paddingLeft: `${28 + depth * 16}px`, paddingTop: '4px', paddingBottom: '4px' }}
-          >
-            <FileIcon language={file.language} />
-            <span className="truncate flex-1 text-left text-xs">{file.name}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="ide-icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
-              style={{ color: 'var(--ide-text-dim)' }}
-              onClick={(e) => handleDeleteFile(file.id, e)}
-              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-error)'}
-              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+          <ContextMenu key={file.id}>
+            <ContextMenuTrigger asChild>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpenRemoteFile(file)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleOpenRemoteFile(file); }}
+                className={`
+                  ide-file-item
+                  w-full flex items-center gap-2 text-sm group
+                  ${activeTabId === file.id ? 'bg-[var(--ide-bg-hover)] text-[var(--ide-text-primary)]' : 'text-[var(--ide-text-secondary)]'}
+                `}
+                style={{ paddingLeft: `${28 + depth * 16}px`, paddingTop: '4px', paddingBottom: '4px' }}
+              >
+                <FileIcon language={file.language} />
+                <span className="truncate flex-1 text-left text-xs">{file.name}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ide-icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
+                  style={{ color: 'var(--ide-text-dim)' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDeleteTarget({ id: file.id, name: file.name, type: 'file' });
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-error)'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent
+              className="border shadow-lg"
+              style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)' }}
             >
-              <Trash2 className="h-3 w-3" />
-            </Button>
-          </div>
+              <ContextMenuItem
+                className="text-xs cursor-pointer"
+                style={{ color: 'var(--ide-text-primary)' }}
+                onClick={() => {
+                  setRenameTarget({ id: file.id, name: file.name, type: 'file' });
+                  setRenameValue(file.name);
+                  setIsRenameDialog(true);
+                }}
+              >
+                <Pencil className="h-3.5 w-3.5 mr-2" />
+                Rename
+              </ContextMenuItem>
+              <ContextMenuSeparator style={{ backgroundColor: 'var(--ide-border)' }} />
+              <ContextMenuItem
+                className="text-xs cursor-pointer"
+                style={{ color: 'var(--ide-error)' }}
+                onClick={() => setConfirmDeleteTarget({ id: file.id, name: file.name, type: 'file' })}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                Delete
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         ))}
       </>
     );
@@ -463,25 +605,64 @@ export function Sidebar() {
                       {folders.length > 0 && renderFolderTree(null)}
                       {/* Show local files not in any folder */}
                       {tabs.filter(t => !t.isRemote).map(tab => (
-                        <div
-                          key={tab.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setActiveTab(tab.id)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') setActiveTab(tab.id); }}
-                          className={`
-                            ide-file-item
-                            w-full flex items-center gap-2 text-sm group
-                            ${activeTabId === tab.id ? 'bg-[var(--ide-bg-hover)] text-[var(--ide-text-primary)]' : 'text-[var(--ide-text-secondary)]'}
-                          `}
-                          style={{ paddingLeft: '28px', paddingTop: '4px', paddingBottom: '4px' }}
-                        >
-                          <FileIcon language={tab.language} />
-                          <span className="truncate flex-1 text-left text-xs">{tab.name}</span>
-                          {tab.isDirty && (
-                            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: 'var(--ide-warning)' }} />
-                          )}
-                        </div>
+                        <ContextMenu key={tab.id}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setActiveTab(tab.id)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') setActiveTab(tab.id); }}
+                              className={`
+                                ide-file-item
+                                w-full flex items-center gap-2 text-sm group
+                                ${activeTabId === tab.id ? 'bg-[var(--ide-bg-hover)] text-[var(--ide-text-primary)]' : 'text-[var(--ide-text-secondary)]'}
+                              `}
+                              style={{ paddingLeft: '28px', paddingTop: '4px', paddingBottom: '4px' }}
+                            >
+                              <FileIcon language={tab.language} />
+                              <span className="truncate flex-1 text-left text-xs">{tab.name}</span>
+                              {tab.isDirty && (
+                                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: 'var(--ide-warning)' }} />
+                              )}
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent
+                            className="border shadow-lg"
+                            style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)' }}
+                          >
+                            {tab.content === '' && CODE_TEMPLATES[tab.language] && (
+                              <ContextMenuItem
+                                className="text-xs cursor-pointer"
+                                style={{ color: 'var(--ide-text-primary)' }}
+                                onClick={() => handleInsertTemplate(tab.id, tab.language)}
+                              >
+                                <FilePlus className="h-3.5 w-3.5 mr-2" />
+                                Insert Template
+                              </ContextMenuItem>
+                            )}
+                            <ContextMenuItem
+                              className="text-xs cursor-pointer"
+                              style={{ color: 'var(--ide-text-primary)' }}
+                              onClick={() => {
+                                setRenameTarget({ id: tab.id, name: tab.name, type: 'file' });
+                                setRenameValue(tab.name);
+                                setIsRenameDialog(true);
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-2" />
+                              Rename
+                            </ContextMenuItem>
+                            <ContextMenuSeparator style={{ backgroundColor: 'var(--ide-border)' }} />
+                            <ContextMenuItem
+                              className="text-xs cursor-pointer"
+                              style={{ color: 'var(--ide-error)' }}
+                              onClick={() => closeTab(tab.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-2" />
+                              Delete
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
                       ))}
                       {tabs.filter(t => !t.isRemote).length === 0 && folders.length === 0 && (
                         <div className="px-4 py-3 text-xs" style={{ color: 'var(--ide-text-faint)' }}>
@@ -525,13 +706,187 @@ export function Sidebar() {
         )}
 
         {sidebarView === 'settings' && (
-          <div className="p-3 space-y-3">
-            <p className="text-xs font-medium" style={{ color: 'var(--ide-text-faint)' }}>Settings</p>
-            <div className="space-y-2">
-              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Font Size: 14px</p>
-              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Tab Size: 4</p>
-              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Auto Save: On</p>
-              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Theme: {useIDEStore.getState().theme === 'dark' ? 'Dark' : 'Light'}</p>
+          <div className="p-3 space-y-4 overflow-y-auto custom-scrollbar" style={{ maxHeight: 'calc(100vh - 100px)' }}>
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ide-text-muted)' }}>Editor</p>
+            
+            {/* Font Size */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Font Size</label>
+                <span className="text-xs font-mono" style={{ color: 'var(--ide-accent)' }}>{settings.fontSize}px</span>
+              </div>
+              <Slider
+                value={[settings.fontSize]}
+                onValueChange={([v]) => updateSettings({ fontSize: v })}
+                min={10}
+                max={24}
+                step={1}
+                className="w-full"
+              />
+            </div>
+
+            {/* Tab Size */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Tab Size</label>
+                <span className="text-xs font-mono" style={{ color: 'var(--ide-accent)' }}>{settings.tabSize}</span>
+              </div>
+              <Slider
+                value={[settings.tabSize]}
+                onValueChange={([v]) => updateSettings({ tabSize: v })}
+                min={2}
+                max={8}
+                step={2}
+                className="w-full"
+              />
+            </div>
+
+            {/* Line Height */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Line Height</label>
+                <span className="text-xs font-mono" style={{ color: 'var(--ide-accent)' }}>{settings.lineHeight}px</span>
+              </div>
+              <Slider
+                value={[settings.lineHeight]}
+                onValueChange={([v]) => updateSettings({ lineHeight: v })}
+                min={16}
+                max={32}
+                step={1}
+                className="w-full"
+              />
+            </div>
+
+            {/* Word Wrap */}
+            <div className="flex items-center justify-between">
+              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Word Wrap</label>
+              <Select value={settings.wordWrap} onValueChange={(v: any) => updateSettings({ wordWrap: v })}>
+                <SelectTrigger className="w-24 h-6 text-xs" style={{ backgroundColor: 'var(--ide-bg-overlay)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)' }}>
+                  <SelectItem value="on" style={{ color: 'var(--ide-text-primary)' }}>On</SelectItem>
+                  <SelectItem value="off" style={{ color: 'var(--ide-text-primary)' }}>Off</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Minimap */}
+            <div className="flex items-center justify-between">
+              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Minimap</label>
+              <Switch
+                checked={settings.minimap}
+                onCheckedChange={(v) => updateSettings({ minimap: v })}
+              />
+            </div>
+
+            {/* Auto Save */}
+            <div className="flex items-center justify-between">
+              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Auto Save</label>
+              <Switch
+                checked={settings.autoSave}
+                onCheckedChange={(v) => updateSettings({ autoSave: v })}
+              />
+            </div>
+
+            {/* Render Whitespace */}
+            <div className="flex items-center justify-between">
+              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Render Whitespace</label>
+              <Select value={settings.renderWhitespace} onValueChange={(v: any) => updateSettings({ renderWhitespace: v })}>
+                <SelectTrigger className="w-24 h-6 text-xs" style={{ backgroundColor: 'var(--ide-bg-overlay)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)' }}>
+                  <SelectItem value="none" style={{ color: 'var(--ide-text-primary)' }}>None</SelectItem>
+                  <SelectItem value="selection" style={{ color: 'var(--ide-text-primary)' }}>Selection</SelectItem>
+                  <SelectItem value="trailing" style={{ color: 'var(--ide-text-primary)' }}>Trailing</SelectItem>
+                  <SelectItem value="all" style={{ color: 'var(--ide-text-primary)' }}>All</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Bracket Pair Colorization */}
+            <div className="flex items-center justify-between">
+              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Bracket Colorization</label>
+              <Switch
+                checked={settings.bracketPairColorization}
+                onCheckedChange={(v) => updateSettings({ bracketPairColorization: v })}
+              />
+            </div>
+
+            {/* Cursor Blinking */}
+            <div className="flex items-center justify-between">
+              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Cursor Blinking</label>
+              <Select value={settings.cursorBlinking} onValueChange={(v: any) => updateSettings({ cursorBlinking: v })}>
+                <SelectTrigger className="w-24 h-6 text-xs" style={{ backgroundColor: 'var(--ide-bg-overlay)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)' }}>
+                  <SelectItem value="blink" style={{ color: 'var(--ide-text-primary)' }}>Blink</SelectItem>
+                  <SelectItem value="smooth" style={{ color: 'var(--ide-text-primary)' }}>Smooth</SelectItem>
+                  <SelectItem value="phase" style={{ color: 'var(--ide-text-primary)' }}>Phase</SelectItem>
+                  <SelectItem value="expand" style={{ color: 'var(--ide-text-primary)' }}>Expand</SelectItem>
+                  <SelectItem value="solid" style={{ color: 'var(--ide-text-primary)' }}>Solid</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* ─── Terminal Section ─── */}
+            <div className="pt-2">
+              <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--ide-text-muted)' }}>Terminal</p>
+
+              {/* Terminal Font Size */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Font Size</label>
+                  <span className="text-xs font-mono" style={{ color: 'var(--ide-accent)' }}>{settings.terminalFontSize}px</span>
+                </div>
+                <Slider
+                  value={[settings.terminalFontSize]}
+                  onValueChange={([v]) => updateSettings({ terminalFontSize: v })}
+                  min={10}
+                  max={24}
+                  step={1}
+                  className="w-full"
+                />
+              </div>
+
+              {/* Terminal Cursor Blink */}
+              <div className="flex items-center justify-between mt-3">
+                <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Cursor Blink</label>
+                <Switch
+                  checked={settings.terminalCursorBlink}
+                  onCheckedChange={(v) => updateSettings({ terminalCursorBlink: v })}
+                />
+              </div>
+
+              {/* Clear on Run */}
+              <div className="flex items-center justify-between mt-3">
+                <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Clear on Run</label>
+                <Switch
+                  checked={settings.terminalClearOnRun}
+                  onCheckedChange={(v) => updateSettings({ terminalClearOnRun: v })}
+                />
+              </div>
+            </div>
+
+            {/* ─── Appearance Section ─── */}
+            <div className="pt-2">
+              <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--ide-text-muted)' }}>Appearance</p>
+
+              {/* Theme */}
+              <div className="flex items-center justify-between">
+                <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Theme</label>
+                <Select value={settings.theme} onValueChange={(v: 'dark' | 'light') => updateSettings({ theme: v })}>
+                  <SelectTrigger className="w-24 h-6 text-xs" style={{ backgroundColor: 'var(--ide-bg-overlay)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)' }}>
+                    <SelectItem value="dark" style={{ color: 'var(--ide-text-primary)' }}>Dark</SelectItem>
+                    <SelectItem value="light" style={{ color: 'var(--ide-text-primary)' }}>Light</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
         )}
@@ -560,6 +915,7 @@ export function Sidebar() {
                 }}
                 className="placeholder:text-[var(--ide-text-faint)]"
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateFile()}
+                autoFocus
               />
             </div>
             <div className="space-y-2">
@@ -589,7 +945,7 @@ export function Sidebar() {
                     <SelectItem value="__root__" style={{ color: 'var(--ide-text-primary)' }}>Root</SelectItem>
                     {folders.map(f => (
                       <SelectItem key={f.id} value={f.id} style={{ color: 'var(--ide-text-primary)' }}>
-                        📁 {f.name}
+                        {f.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -664,16 +1020,53 @@ export function Sidebar() {
                 borderColor: 'var(--ide-border)',
                 color: 'var(--ide-text-primary)',
               }}
-              onKeyDown={(e) => e.key === 'Enter' && handleRenameFolder()}
+              onKeyDown={(e) => e.key === 'Enter' && handleRenameFile()}
               autoFocus
             />
             <Button
-              onClick={handleRenameFolder}
+              onClick={handleRenameFile}
               className="ide-btn-hover w-full font-medium"
               style={{ backgroundColor: 'var(--ide-accent)', color: 'var(--ide-bg-base)' }}
               disabled={!renameValue.trim()}
             >
               Rename
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm Delete Dialog */}
+      <Dialog open={!!confirmDeleteTarget} onOpenChange={(open) => { if (!open) setConfirmDeleteTarget(null); }}>
+        <DialogContent className="sm:max-w-[400px]" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+          <DialogHeader>
+            <DialogTitle>Delete {confirmDeleteTarget?.type === 'folder' ? 'Folder' : 'File'}</DialogTitle>
+            <DialogDescription style={{ color: 'var(--ide-text-muted)' }}>
+              Are you sure you want to delete &quot;{confirmDeleteTarget?.name}&quot;?
+              {confirmDeleteTarget?.type === 'folder' && ' This will also delete all files inside this folder.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 justify-end mt-2">
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmDeleteTarget(null)}
+              style={{ color: 'var(--ide-text-secondary)' }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (confirmDeleteTarget) {
+                  if (confirmDeleteTarget.type === 'file') {
+                    handleDeleteFile(confirmDeleteTarget.id);
+                  } else {
+                    handleDeleteFolder(confirmDeleteTarget.id);
+                  }
+                  setConfirmDeleteTarget(null);
+                }
+              }}
+              style={{ backgroundColor: 'var(--ide-error)', color: 'white' }}
+            >
+              Delete
             </Button>
           </div>
         </DialogContent>

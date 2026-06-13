@@ -137,7 +137,7 @@ export function StatusBar({ isConnected }: StatusBarProps) {
         {activeTab && (
           <>
             <span className="text-[10px]" style={{ color: 'var(--ide-text-dim)' }}>
-              Ln 1, Col 1
+              Ln {activeTab.cursorLine}, Col {activeTab.cursorColumn}
             </span>
             <span className="text-[10px]" style={{ color: 'var(--ide-text-dim)' }}>
               UTF-8

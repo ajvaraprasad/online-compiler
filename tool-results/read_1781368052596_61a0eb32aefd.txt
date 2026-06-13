@@ -492,14 +492,14 @@
    492→
    493→  return (
    494→    <>
-   495→      <div className="h-10 bg-[#181825] border-b border-[#313244] flex items-center justify-between px-3 shrink-0">
+   495→      <div className="h-10 border-b flex items-center justify-between px-3 shrink-0" style={{ backgroundColor: 'var(--ide-bg-toolbar)', borderColor: 'var(--ide-border)' }}>
    496→        {/* Left section - Logo and file actions */}
    497→        <div className="flex items-center gap-2">
    498→          <div className="flex items-center gap-2 mr-3">
    499→            <div className="w-5 h-5 rounded bg-gradient-to-br from-[#89b4fa] to-[#cba6f7] flex items-center justify-center">
    500→              <span className="text-[10px] font-bold text-[#1e1e2e]">CF</span>
    501→            </div>
-   502→            <span className="text-xs font-semibold text-[#cdd6f4] hidden sm:inline">CodeForge</span>
+   502→            <span className="text-xs font-semibold hidden sm:inline" style={{ color: 'var(--ide-text-primary)' }}>CodeForge</span>
    503→          </div>
    504→
    505→          <TooltipProvider>
@@ -508,243 +508,247 @@
    508→                <Button
    509→                  variant="ghost"
    510→                  size="icon"
-   511→                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
-   512→                  onClick={handleNewFile}
-   513→                >
-   514→                  <Plus className="h-4 w-4" />
-   515→                </Button>
-   516→              </TooltipTrigger>
-   517→              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
-   518→                New File
-   519→              </TooltipContent>
-   520→            </Tooltip>
-   521→
-   522→            <Tooltip>
-   523→              <TooltipTrigger asChild>
-   524→                <Button
-   525→                  variant="ghost"
-   526→                  size="icon"
-   527→                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
-   528→                  onClick={handleSave}
-   529→                  disabled={!activeTab || isSaving}
-   530→                >
-   531→                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-   532→                </Button>
-   533→              </TooltipTrigger>
-   534→              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
-   535→                Save (Ctrl+S)
-   536→              </TooltipContent>
-   537→            </Tooltip>
-   538→          </TooltipProvider>
-   539→        </div>
-   540→
-   541→        {/* Center section - Language selector and run controls */}
-   542→        <div className="flex items-center gap-2">
-   543→          <Select value={language} onValueChange={handleLanguageChange}>
-   544→            <SelectTrigger className="h-7 w-[130px] bg-[#11111b] border-[#313244] text-[#cdd6f4] text-xs">
-   545→              <SelectValue />
-   546→            </SelectTrigger>
-   547→            <SelectContent className="bg-[#1e1e2e] border-[#313244]">
-   548→              {Object.entries(LANGUAGE_NAMES).map(([key, name]) => (
-   549→                <SelectItem key={key} value={key} className="text-[#cdd6f4] focus:bg-[#313244] focus:text-[#cdd6f4] text-xs">
-   550→                  {name}
-   551→                </SelectItem>
-   552→              ))}
-   553→            </SelectContent>
-   554→          </Select>
-   555→
-   556→          <TooltipProvider>
-   557→            <Tooltip>
-   558→              <TooltipTrigger asChild>
-   559→                <Button
-   560→                  variant="ghost"
-   561→                  size="sm"
-   562→                  className="h-7 text-[10px] text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
-   563→                  onClick={() => setIsStdinDialog(true)}
-   564→                >
-   565→                  INPUT
-   566→                </Button>
-   567→              </TooltipTrigger>
-   568→              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
-   569→                How to Provide Input
-   570→              </TooltipContent>
-   571→            </Tooltip>
-   572→          </TooltipProvider>
-   573→
-   574→          {isExecuting ? (
-   575→            <Button
-   576→              size="sm"
-   577→              className="ide-btn-hover h-7 bg-[#f38ba8] hover:bg-[#eba0ac] text-[#1e1e2e] text-xs font-medium gap-1.5 px-3"
-   578→              onClick={handleStop}
-   579→            >
-   580→              <Square className="h-3 w-3 fill-current" />
-   581→              Stop
-   582→            </Button>
-   583→          ) : (
-   584→            <div className="flex items-center gap-1">
-   585→              <Button
-   586→                size="sm"
-   587→                className={`ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3 ${
-   588→                  errorCount > 0
-   589→                    ? 'bg-[#f9e2af] hover:bg-[#f5c2d7] text-[#1e1e2e]'
-   590→                    : 'bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e]'
-   591→                }`}
-   592→                onClick={handleRun}
-   593→                disabled={!activeTab}
-   594→              >
-   595→                <Play className="h-3 w-3 fill-current" />
-   596→                Run
-   597→              </Button>
-   598→              {errorCount > 0 && (
-   599→                <TooltipProvider>
-   600→                  <Tooltip>
-   601→                    <TooltipTrigger asChild>
-   602→                      <div className="ide-status-item flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-sm bg-[#f38ba820]"
-   603→                        onClick={() => {
-   604→                          // Navigate to first error
-   605→                          const firstError = diagnostics.find(d => d.severity === 'error');
-   606→                          if (firstError) {
-   607→                            const editor = getEditorInstance();
-   608→                            if (editor) {
-   609→                              editor.revealLineInCenter(firstError.line);
-   610→                              editor.setPosition({ lineNumber: firstError.line, column: firstError.column });
-   611→                              editor.focus();
-   612→                            }
-   613→                          }
-   614→                        }}
-   615→                      >
-   616→                        <AlertCircle className="h-3 w-3" style={{ color: '#f38ba8' }} />
-   617→                        <span className="text-[9px] font-bold ml-0.5" style={{ color: '#f38ba8' }}>{errorCount}</span>
-   618→                      </div>
-   619→                    </TooltipTrigger>
-   620→                    <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
-   621→                      {errorCount} error{errorCount > 1 ? 's' : ''} — click to jump to first
-   622→                    </TooltipContent>
-   623→                  </Tooltip>
-   624→                </TooltipProvider>
-   625→              )}
-   626→            </div>
-   627→          )}
-   628→
-   629→          {/* Current compiler phase indicator */}
-   630→          {isExecuting && currentPhaseDisplay && (
-   631→            <span className="text-[10px] text-[#f9e2af] animate-pulse hidden sm:inline">
-   632→              {currentPhaseDisplay}...
-   633→            </span>
-   634→          )}
-   635→        </div>
-   636→
-   637→        {/* Right section */}
-   638→        <div className="flex items-center gap-2">
-   639→          <TooltipProvider>
-   640→            <Tooltip>
-   641→              <TooltipTrigger asChild>
-   642→                <Button
-   643→                  variant="ghost"
-   644→                  size="icon"
-   645→                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
-   646→                  onClick={handleDownload}
-   647→                  disabled={!activeTab}
-   648→                >
-   649→                  <Download className="h-4 w-4" />
-   650→                </Button>
-   651→              </TooltipTrigger>
-   652→              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
-   653→                Download File
-   654→              </TooltipContent>
-   655→            </Tooltip>
-   656→
-   657→            <Tooltip>
-   658→              <TooltipTrigger asChild>
-   659→                <Button
-   660→                  variant="ghost"
-   661→                  size="icon"
-   662→                  className="ide-icon-btn h-7 w-7 text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]/50"
-   663→                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-   664→                >
-   665→                  {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-   666→                </Button>
-   667→              </TooltipTrigger>
-   668→              <TooltipContent className="bg-[#1e1e2e] border-[#313244] text-[#cdd6f4] text-xs">
-   669→                Toggle Theme
-   670→              </TooltipContent>
-   671→            </Tooltip>
-   672→          </TooltipProvider>
-   673→        </div>
-   674→      </div>
-   675→
-   676→      {/* Stdin Help Dialog */}
-   677→      <Dialog open={isStdinDialog} onOpenChange={setIsStdinDialog}>
-   678→        <DialogContent className="sm:max-w-[500px] bg-[#1e1e2e] border-[#313244] text-[#cdd6f4]">
-   679→          <DialogHeader>
-   680→            <DialogTitle className="text-[#cdd6f4]">How to Provide Input</DialogTitle>
-   681→            <DialogDescription className="text-[#a6adc8]">
-   682→              Type directly in the terminal while your program is running
-   683→            </DialogDescription>
-   684→          </DialogHeader>
-   685→          <div className="space-y-4 mt-2">
-   686→            <div className="bg-[#11111b] rounded-md p-4 border border-[#313244]">
-   687→              <p className="text-sm text-[#a6e3a1] font-medium mb-3">Interactive Terminal Input</p>
-   688→              <ul className="text-xs text-[#bac2de] space-y-2.5">
-   689→                <li className="flex items-start gap-2">
-   690→                  <span className="text-[#89b4fa] font-bold shrink-0">1.</span>
-   691→                  <span>Click <strong className="text-[#a6e3a1]">Run</strong> to start your program</span>
-   692→                </li>
-   693→                <li className="flex items-start gap-2">
-   694→                  <span className="text-[#89b4fa] font-bold shrink-0">2.</span>
-   695→                  <span>The compiler pipeline runs: <span className="text-[#f9e2af]">Lexer, Parser, Semantic, IR, Optimize, Security, CodeGen</span></span>
-   696→                </li>
-   697→                <li className="flex items-start gap-2">
-   698→                  <span className="text-[#89b4fa] font-bold shrink-0">3.</span>
-   699→                  <span>Program output appears in the terminal in real-time</span>
-   700→                </li>
-   701→                <li className="flex items-start gap-2">
-   702→                  <span className="text-[#89b4fa] font-bold shrink-0">4.</span>
-   703→                  <span>When the program asks for input, <strong className="text-[#f9e2af]">type in the terminal</strong> and press <kbd className="px-1.5 py-0.5 bg-[#313244] rounded text-[10px]">Enter</kbd></span>
-   704→                </li>
-   705→              </ul>
-   706→            </div>
-   707→            <div className="bg-[#11111b] rounded-md p-3 border border-[#313244]">
-   708→              <p className="text-[11px] text-[#f9e2af] font-medium mb-2">Example (Python):</p>
-   709→              <div className="bg-[#181825] rounded p-2 font-mono text-[11px] leading-relaxed">
-   710→                <div className="text-[#6c7086]"># Your code:</div>
-   711→                <div><span className="text-[#89b4fa]">print</span>(<span className="text-[#a6e3a1]">&quot;Hello, World!&quot;</span>)</div>
-   712→                <div>name = <span className="text-[#89b4fa]">input</span>(<span className="text-[#a6e3a1]">&quot;Enter your name: &quot;</span>)</div>
-   713→                <div><span className="text-[#89b4fa]">print</span>(<span className="text-[#a6e3a1]">f&quot;Hello, {'{name}'}&quot;</span>)</div>
-   714→              </div>
-   715→              <div className="mt-2 bg-[#181825] rounded p-2 font-mono text-[11px] leading-relaxed">
-   716→                <div className="text-[#6c7086]"># Terminal output:</div>
-   717→                <div className="text-[#6c7086]">[INFO] Lexical Analysis...</div>
-   718→                <div className="text-[#6c7086]">[OK]   Lexical Analysis (8 tokens, 4 LOC)</div>
-   719→                <div className="text-[#6c7086]">[OK]   Parsing (12 nodes, 1 functions)</div>
-   720→                <div className="text-[#6c7086]">[OK]   Semantic Analysis (3 symbols)</div>
-   721→                <div className="text-[#6c7086]">[OK]   IR Generation (8 instructions)</div>
-   722→                <div className="text-[#6c7086]">[OK]   Optimization (8 -&gt; 6 instructions)</div>
-   723→                <div className="text-[#6c7086]">[OK]   Security Analysis (risk: low)</div>
-   724→                <div className="text-[#6c7086]">[OK]   Code Generation (Native)</div>
-   725→                <div className="text-[#cdd6f4]">Hello, World!</div>
-   726→                <div className="text-[#cdd6f4]">Enter your name: <span className="text-[#f9e2af]">yuva</span> <span className="text-[#6c7086]">&lt;- type here</span></div>
-   727→                <div className="text-[#cdd6f4]">Hello, yuva!</div>
-   728→              </div>
-   729→            </div>
-   730→            <div className="bg-[#11111b] rounded-md p-3 border border-[#313244]">
-   731→              <p className="text-[11px] text-[#94e2d5] font-medium mb-1.5">Keyboard Shortcuts:</p>
-   732→              <ul className="text-[10px] text-[#a6adc8] space-y-1">
-   733→                <li><kbd className="px-1 py-0.5 bg-[#313244] rounded text-[10px]">Enter</kbd> -- Send input line to the program</li>
-   734→                <li><kbd className="px-1 py-0.5 bg-[#313244] rounded text-[10px]">Backspace</kbd> -- Delete last character</li>
-   735→                <li><kbd className="px-1 py-0.5 bg-[#313244] rounded text-[10px]">Ctrl+C</kbd> -- Kill the running program</li>
-   736→              </ul>
-   737→            </div>
-   738→            <Button
-   739→              onClick={() => setIsStdinDialog(false)}
-   740→              className="ide-btn-hover w-full bg-[#89b4fa] hover:bg-[#74c7ec] text-[#1e1e2e] font-medium"
-   741→            >
-   742→              Got it!
-   743→            </Button>
-   744→          </div>
-   745→        </DialogContent>
-   746→      </Dialog>
-   747→    </>
-   748→  );
-   749→}
-   750→
+   511→                  className="ide-icon-btn h-7 w-7"
+   512→                  style={{ color: 'var(--ide-text-dim)' }}
+   513→                  onClick={handleNewFile}
+   514→                >
+   515→                  <Plus className="h-4 w-4" />
+   516→                </Button>
+   517→              </TooltipTrigger>
+   518→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   519→                New File
+   520→              </TooltipContent>
+   521→            </Tooltip>
+   522→
+   523→            <Tooltip>
+   524→              <TooltipTrigger asChild>
+   525→                <Button
+   526→                  variant="ghost"
+   527→                  size="icon"
+   528→                  className="ide-icon-btn h-7 w-7"
+   529→                  style={{ color: 'var(--ide-text-dim)' }}
+   530→                  onClick={handleSave}
+   531→                  disabled={!activeTab || isSaving}
+   532→                >
+   533→                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+   534→                </Button>
+   535→              </TooltipTrigger>
+   536→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   537→                Save (Ctrl+S)
+   538→              </TooltipContent>
+   539→            </Tooltip>
+   540→          </TooltipProvider>
+   541→        </div>
+   542→
+   543→        {/* Center section - Language selector and run controls */}
+   544→        <div className="flex items-center gap-2">
+   545→          <Select value={language} onValueChange={handleLanguageChange}>
+   546→            <SelectTrigger className="h-7 w-[130px] text-xs" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   547→              <SelectValue />
+   548→            </SelectTrigger>
+   549→            <SelectContent style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)' }}>
+   550→              {Object.entries(LANGUAGE_NAMES).map(([key, name]) => (
+   551→                <SelectItem key={key} value={key} className="text-xs" style={{ color: 'var(--ide-text-primary)' }}>
+   552→                  {name}
+   553→                </SelectItem>
+   554→              ))}
+   555→            </SelectContent>
+   556→          </Select>
+   557→
+   558→          <TooltipProvider>
+   559→            <Tooltip>
+   560→              <TooltipTrigger asChild>
+   561→                <Button
+   562→                  variant="ghost"
+   563→                  size="sm"
+   564→                  className="h-7 text-[10px]"
+   565→                  style={{ color: 'var(--ide-text-dim)' }}
+   566→                  onClick={() => setIsStdinDialog(true)}
+   567→                >
+   568→                  INPUT
+   569→                </Button>
+   570→              </TooltipTrigger>
+   571→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   572→                How to Provide Input
+   573→              </TooltipContent>
+   574→            </Tooltip>
+   575→          </TooltipProvider>
+   576→
+   577→          {isExecuting ? (
+   578→            <Button
+   579→              size="sm"
+   580→              className="ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3"
+   581→              style={{ backgroundColor: 'var(--ide-error)', color: 'var(--ide-bg-base)' }}
+   582→              onClick={handleStop}
+   583→            >
+   584→              <Square className="h-3 w-3 fill-current" />
+   585→              Stop
+   586→            </Button>
+   587→          ) : (
+   588→            <div className="flex items-center gap-1">
+   589→              <Button
+   590→                size="sm"
+   591→                className="ide-btn-hover h-7 text-xs font-medium gap-1.5 px-3"
+   592→                style={{ backgroundColor: errorCount > 0 ? 'var(--ide-warning)' : 'var(--ide-success)', color: 'var(--ide-bg-base)' }}
+   593→                onClick={handleRun}
+   594→                disabled={!activeTab}
+   595→              >
+   596→                <Play className="h-3 w-3 fill-current" />
+   597→                Run
+   598→              </Button>
+   599→              {errorCount > 0 && (
+   600→                <TooltipProvider>
+   601→                  <Tooltip>
+   602→                    <TooltipTrigger asChild>
+   603→                      <div className="ide-status-item flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-sm" style={{ backgroundColor: 'var(--ide-error)', opacity: 0.15 }}
+   604→                        onClick={() => {
+   605→                          // Navigate to first error
+   606→                          const firstError = diagnostics.find(d => d.severity === 'error');
+   607→                          if (firstError) {
+   608→                            const editor = getEditorInstance();
+   609→                            if (editor) {
+   610→                              editor.revealLineInCenter(firstError.line);
+   611→                              editor.setPosition({ lineNumber: firstError.line, column: firstError.column });
+   612→                              editor.focus();
+   613→                            }
+   614→                          }
+   615→                        }}
+   616→                      >
+   617→                        <AlertCircle className="h-3 w-3" style={{ color: 'var(--ide-error)' }} />
+   618→                        <span className="text-[9px] font-bold ml-0.5" style={{ color: 'var(--ide-error)' }}>{errorCount}</span>
+   619→                      </div>
+   620→                    </TooltipTrigger>
+   621→                    <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   622→                      {errorCount} error{errorCount > 1 ? 's' : ''} — click to jump to first
+   623→                    </TooltipContent>
+   624→                  </Tooltip>
+   625→                </TooltipProvider>
+   626→              )}
+   627→            </div>
+   628→          )}
+   629→
+   630→          {/* Current compiler phase indicator */}
+   631→          {isExecuting && currentPhaseDisplay && (
+   632→            <span className="text-[10px] animate-pulse hidden sm:inline" style={{ color: 'var(--ide-warning)' }}>
+   633→              {currentPhaseDisplay}...
+   634→            </span>
+   635→          )}
+   636→        </div>
+   637→
+   638→        {/* Right section */}
+   639→        <div className="flex items-center gap-2">
+   640→          <TooltipProvider>
+   641→            <Tooltip>
+   642→              <TooltipTrigger asChild>
+   643→                <Button
+   644→                  variant="ghost"
+   645→                  size="icon"
+   646→                  className="ide-icon-btn h-7 w-7"
+   647→                  style={{ color: 'var(--ide-text-dim)' }}
+   648→                  onClick={handleDownload}
+   649→                  disabled={!activeTab}
+   650→                >
+   651→                  <Download className="h-4 w-4" />
+   652→                </Button>
+   653→              </TooltipTrigger>
+   654→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   655→                Download File
+   656→              </TooltipContent>
+   657→            </Tooltip>
+   658→
+   659→            <Tooltip>
+   660→              <TooltipTrigger asChild>
+   661→                <Button
+   662→                  variant="ghost"
+   663→                  size="icon"
+   664→                  className="ide-icon-btn h-7 w-7"
+   665→                  style={{ color: 'var(--ide-text-dim)' }}
+   666→                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+   667→                >
+   668→                  {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+   669→                </Button>
+   670→              </TooltipTrigger>
+   671→              <TooltipContent className="text-xs" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   672→                Toggle Theme
+   673→              </TooltipContent>
+   674→            </Tooltip>
+   675→          </TooltipProvider>
+   676→        </div>
+   677→      </div>
+   678→
+   679→      {/* Stdin Help Dialog */}
+   680→      <Dialog open={isStdinDialog} onOpenChange={setIsStdinDialog}>
+   681→        <DialogContent className="sm:max-w-[500px]" style={{ backgroundColor: 'var(--ide-bg-surface)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   682→          <DialogHeader>
+   683→            <DialogTitle style={{ color: 'var(--ide-text-primary)' }}>How to Provide Input</DialogTitle>
+   684→            <DialogDescription style={{ color: 'var(--ide-text-secondary)' }}>
+   685→              Type directly in the terminal while your program is running
+   686→            </DialogDescription>
+   687→          </DialogHeader>
+   688→          <div className="space-y-4 mt-2">
+   689→            <div className="rounded-md p-4 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+   690→              <p className="text-sm font-medium mb-3" style={{ color: 'var(--ide-success)' }}>Interactive Terminal Input</p>
+   691→              <ul className="text-xs space-y-2.5" style={{ color: 'var(--ide-text-secondary)' }}>
+   692→                <li className="flex items-start gap-2">
+   693→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>1.</span>
+   694→                  <span>Click <strong style={{ color: 'var(--ide-success)' }}>Run</strong> to start your program</span>
+   695→                </li>
+   696→                <li className="flex items-start gap-2">
+   697→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>2.</span>
+   698→                  <span>The compiler pipeline runs: <span style={{ color: 'var(--ide-warning)' }}>Lexer, Parser, Semantic, IR, Optimize, Security, CodeGen</span></span>
+   699→                </li>
+   700→                <li className="flex items-start gap-2">
+   701→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>3.</span>
+   702→                  <span>Program output appears in the terminal in real-time</span>
+   703→                </li>
+   704→                <li className="flex items-start gap-2">
+   705→                  <span className="font-bold shrink-0" style={{ color: 'var(--ide-accent)' }}>4.</span>
+   706→                  <span>When the program asks for input, <strong style={{ color: 'var(--ide-warning)' }}>type in the terminal</strong> and press <kbd className="px-1.5 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Enter</kbd></span>
+   707→                </li>
+   708→              </ul>
+   709→            </div>
+   710→            <div className="rounded-md p-3 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+   711→              <p className="text-[11px] font-medium mb-2" style={{ color: 'var(--ide-warning)' }}>Example (Python):</p>
+   712→              <div className="rounded p-2 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--ide-bg-surface)' }}>
+   713→                <div style={{ color: 'var(--ide-text-dim)' }}># Your code:</div>
+   714→                <div><span style={{ color: 'var(--ide-accent)' }}>print</span>(<span style={{ color: 'var(--ide-success)' }}>&quot;Hello, World!&quot;</span>)</div>
+   715→                <div>name = <span style={{ color: 'var(--ide-accent)' }}>input</span>(<span style={{ color: 'var(--ide-success)' }}>&quot;Enter your name: &quot;</span>)</div>
+   716→                <div><span style={{ color: 'var(--ide-accent)' }}>print</span>(<span style={{ color: 'var(--ide-success)' }}>f&quot;Hello, {'{name}'}&quot;</span>)</div>
+   717→              </div>
+   718→              <div className="mt-2 rounded p-2 font-mono text-[11px] leading-relaxed" style={{ backgroundColor: 'var(--ide-bg-surface)' }}>
+   719→                <div style={{ color: 'var(--ide-text-dim)' }}># Terminal output:</div>
+   720→                <div style={{ color: 'var(--ide-text-dim)' }}>[INFO] Lexical Analysis...</div>
+   721→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Lexical Analysis (8 tokens, 4 LOC)</div>
+   722→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Parsing (12 nodes, 1 functions)</div>
+   723→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Semantic Analysis (3 symbols)</div>
+   724→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   IR Generation (8 instructions)</div>
+   725→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Optimization (8 -&gt; 6 instructions)</div>
+   726→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Security Analysis (risk: low)</div>
+   727→                <div style={{ color: 'var(--ide-text-dim)' }}>[OK]   Code Generation (Native)</div>
+   728→                <div style={{ color: 'var(--ide-text-primary)' }}>Hello, World!</div>
+   729→                <div style={{ color: 'var(--ide-text-primary)' }}>Enter your name: <span style={{ color: 'var(--ide-warning)' }}>yuva</span> <span style={{ color: 'var(--ide-text-dim)' }}>&lt;- type here</span></div>
+   730→                <div style={{ color: 'var(--ide-text-primary)' }}>Hello, yuva!</div>
+   731→              </div>
+   732→            </div>
+   733→            <div className="rounded-md p-3 border" style={{ backgroundColor: 'var(--ide-bg-input)', borderColor: 'var(--ide-border)' }}>
+   734→              <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--ide-purple)' }}>Keyboard Shortcuts:</p>
+   735→              <ul className="text-[10px] space-y-1" style={{ color: 'var(--ide-text-secondary)' }}>
+   736→                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Enter</kbd> -- Send input line to the program</li>
+   737→                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Backspace</kbd> -- Delete last character</li>
+   738→                <li><kbd className="px-1 py-0.5 rounded text-[10px]" style={{ backgroundColor: 'var(--ide-bg-hover)' }}>Ctrl+C</kbd> -- Kill the running program</li>
+   739→              </ul>
+   740→            </div>
+   741→            <Button
+   742→              onClick={() => setIsStdinDialog(false)}
+   743→              className="ide-btn-hover w-full font-medium"
+   744→              style={{ backgroundColor: 'var(--ide-accent)', color: 'var(--ide-bg-base)' }}
+   745→            >
+   746→              Got it!
+   747→            </Button>
+   748→          </div>
+   749→        </DialogContent>
+   750→      </Dialog>
+   751→    </>
+   752→  );
+   753→}
+   754→

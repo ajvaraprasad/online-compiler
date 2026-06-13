@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import { useIDEStore } from '@/store/useIDEStore';
-import { filesAPI, LANGUAGE_NAMES, LANGUAGE_EXTENSIONS, DEFAULT_CODE } from '@/lib/api';
+import { filesAPI, LANGUAGE_NAMES, LANGUAGE_EXTENSIONS } from '@/lib/api';
 import { executeCode, killExecution, onConnectionChange, isConnected } from '@/lib/executor-client';
 import { waitForTerminalReady } from './Terminal';
 import { getEditorInstance } from './ProblemsPanel';
@@ -178,7 +178,9 @@ export function Toolbar() {
       ]);
 
       terminalReadyWithTimeout.then(() => {
-        store.clearTerminal();
+        if (store.settings.terminalClearOnRun) {
+          store.clearTerminal();
+        }
         store.writeToTerminal(
           ANSI.RED + ANSI.BOLD + 'Compilation Error:' + ANSI.RESET + '\r\n'
         );
@@ -248,7 +250,9 @@ export function Toolbar() {
 
     terminalReadyWithTimeout.then(() => {
       const store = useIDEStore.getState();
-      store.clearTerminal();
+      if (store.settings.terminalClearOnRun) {
+        store.clearTerminal();
+      }
 
       // Check if the terminal service is reachable
       if (!isConnected()) {
@@ -471,7 +475,7 @@ export function Toolbar() {
       const ext = LANGUAGE_EXTENSIONS[newLang] || '.txt';
       const baseName = activeTab.name.replace(/\.[^.]+$/, '');
       const newName = baseName + ext;
-      updateTabContent(activeTab.id, DEFAULT_CODE[newLang] || '');
+      // Only change language and file extension — do NOT replace content with template
       useIDEStore.setState(state => ({
         language: newLang,
         tabs: state.tabs.map(t =>

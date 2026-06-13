@@ -1,0 +1,684 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useEffect, useCallback } from 'react';
+     4→import { useIDEStore, type FileItem, type FolderItem } from '@/store/useIDEStore';
+     5→import { filesAPI, foldersAPI, LANGUAGE_EXTENSIONS, LANGUAGE_NAMES, DEFAULT_CODE } from '@/lib/api';
+     6→import {
+     7→  ChevronRight,
+     8→  ChevronDown,
+     9→  FileCode,
+    10→  Folder,
+    11→  FolderOpen,
+    12→  FolderPlus,
+    13→  Plus,
+    14→  Trash2,
+    15→  Pencil,
+    16→  RefreshCw,
+    17→} from 'lucide-react';
+    18→import { Button } from '@/components/ui/button';
+    19→import { Input } from '@/components/ui/input';
+    20→import {
+    21→  Dialog,
+    22→  DialogContent,
+    23→  DialogHeader,
+    24→  DialogTitle,
+    25→  DialogDescription,
+    26→} from '@/components/ui/dialog';
+    27→import {
+    28→  Select,
+    29→  SelectContent,
+    30→  SelectItem,
+    31→  SelectTrigger,
+    32→  SelectValue,
+    33→} from '@/components/ui/select';
+    34→import {
+    35→  Tooltip,
+    36→  TooltipContent,
+    37→  TooltipProvider,
+    38→  TooltipTrigger,
+    39→} from '@/components/ui/tooltip';
+    40→
+    41→// Language icons mapping
+    42→const LANGUAGE_COLORS: Record<string, string> = {
+    43→  python: '#89b4fa',
+    44→  c: '#a6e3a1',
+    45→  cpp: '#74c7ec',
+    46→  java: '#f9e2af',
+    47→  javascript: '#f9e2af',
+    48→};
+    49→
+    50→function FileIcon({ language }: { language: string }) {
+    51→  const color = LANGUAGE_COLORS[language] || 'var(--ide-text-dim)';
+    52→  return <FileCode className="h-4 w-4" style={{ color }} />;
+    53→}
+    54→
+    55→export function Sidebar() {
+    56→  const {
+    57→    isSidebarOpen,
+    58→    sidebarView,
+    59→    tabs,
+    60→    activeTabId,
+    61→    addTab,
+    62→    setActiveTab,
+    63→    isAuthenticated,
+    64→    remoteFiles,
+    65→    setRemoteFiles,
+    66→    removeRemoteFile,
+    67→    openAuthModal,
+    68→    folders,
+    69→    setFolders,
+    70→    addFolder,
+    71→    removeFolder,
+    72→    updateFolder,
+    73→    toggleFolderExpanded,
+    74→  } = useIDEStore();
+    75→
+    76→  const [isExpanded, setIsExpanded] = useState(true);
+    77→  const [isNewFileDialog, setIsNewFileDialog] = useState(false);
+    78→  const [newFileName, setNewFileName] = useState('');
+    79→  const [newFileLanguage, setNewFileLanguage] = useState('python');
+    80→  const [newFileFolderId, setNewFileFolderId] = useState<string | null>(null);
+    81→  const [isNewFolderDialog, setIsNewFolderDialog] = useState(false);
+    82→  const [newFolderName, setNewFolderName] = useState('');
+    83→  const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
+    84→  const [isRenameDialog, setIsRenameDialog] = useState(false);
+    85→  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: 'folder' } | null>(null);
+    86→  const [renameValue, setRenameValue] = useState('');
+    87→  const [isLoading, setIsLoading] = useState(false);
+    88→
+    89→  // Load remote files and folders
+    90→  const loadData = useCallback(async () => {
+    91→    if (!isAuthenticated) return;
+    92→    setIsLoading(true);
+    93→    try {
+    94→      const [filesData, foldersData] = await Promise.all([
+    95→        filesAPI.list(),
+    96→        foldersAPI.list(),
+    97→      ]);
+    98→      setRemoteFiles(filesData.files);
+    99→      setFolders(foldersData.folders.map((f: any) => ({
+   100→        ...f,
+   101→        isExpanded: folders.find(existing => existing.id === f.id)?.isExpanded ?? true,
+   102→      })));
+   103→    } catch (err) {
+   104→      console.error('Failed to load data:', err);
+   105→    } finally {
+   106→      setIsLoading(false);
+   107→    }
+   108→  }, [isAuthenticated, setRemoteFiles, setFolders]);
+   109→
+   110→  useEffect(() => {
+   111→    if (isAuthenticated) {
+   112→      loadData();
+   113→    }
+   114→  }, [isAuthenticated, loadData]);
+   115→
+   116→  const handleOpenRemoteFile = (file: FileItem) => {
+   117→    const existing = tabs.find(t => t.name === file.name && t.isRemote);
+   118→    if (existing) {
+   119→      setActiveTab(existing.id);
+   120→    } else {
+   121→      addTab(file.name, file.language, file.content, file.id, true);
+   122→    }
+   123→  };
+   124→
+   125→  const handleNewFile = (folderId: string | null = null) => {
+   126→    setNewFileName('');
+   127→    setNewFileLanguage('python');
+   128→    setNewFileFolderId(folderId);
+   129→    setIsNewFileDialog(true);
+   130→  };
+   131→
+   132→  const handleCreateFile = async () => {
+   133→    try {
+   134→      const ext = LANGUAGE_EXTENSIONS[newFileLanguage] || '.txt';
+   135→      const name = newFileName.includes('.') ? newFileName : newFileName + ext;
+   136→      const content = DEFAULT_CODE[newFileLanguage] || '';
+   137→
+   138→      if (isAuthenticated) {
+   139→        // Create as remote file (saved to server)
+   140→        const data = await filesAPI.create(name, newFileLanguage, content, newFileFolderId);
+   141→        addTab(name, newFileLanguage, content, data.file.id, true);
+   142→        setRemoteFiles([...remoteFiles, data.file]);
+   143→      } else {
+   144→        // Create as local-only tab (not persisted)
+   145→        addTab(name, newFileLanguage, content);
+   146→      }
+   147→      setIsNewFileDialog(false);
+   148→    } catch (err: any) {
+   149→      console.error('Failed to create file:', err.message);
+   150→    }
+   151→  };
+   152→
+   153→  const handleDeleteFile = async (fileId: string, e: React.MouseEvent) => {
+   154→    e.stopPropagation();
+   155→    try {
+   156→      await filesAPI.delete(fileId);
+   157→      removeRemoteFile(fileId);
+   158→    } catch (err) {
+   159→      console.error('Failed to delete file:', err);
+   160→    }
+   161→  };
+   162→
+   163→  const handleCreateFolder = async () => {
+   164→    if (!newFolderName.trim()) return;
+   165→    if (!isAuthenticated) {
+   166→      // Create a local-only folder (not persisted to server)
+   167→      const localFolder: FolderItem = {
+   168→        id: `local_folder_${Date.now()}`,
+   169→        name: newFolderName.trim(),
+   170→        parentId: newFolderParentId,
+   171→        isExpanded: true,
+   172→        createdAt: new Date().toISOString(),
+   173→        updatedAt: new Date().toISOString(),
+   174→      };
+   175→      addFolder(localFolder);
+   176→      setIsNewFolderDialog(false);
+   177→      setNewFolderName('');
+   178→      return;
+   179→    }
+   180→    try {
+   181→      const data = await foldersAPI.create(newFolderName.trim(), newFolderParentId);
+   182→      addFolder({ ...data.folder, isExpanded: true });
+   183→      setIsNewFolderDialog(false);
+   184→      setNewFolderName('');
+   185→    } catch (err: any) {
+   186→      console.error('Failed to create folder:', err.message);
+   187→    }
+   188→  };
+   189→
+   190→  const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
+   191→    e.stopPropagation();
+   192→    try {
+   193→      await foldersAPI.delete(folderId);
+   194→      removeFolder(folderId);
+   195→      // Also remove files that were in this folder
+   196→      const filesInFolder = remoteFiles.filter(f => f.folderId === folderId);
+   197→      for (const file of filesInFolder) {
+   198→        removeRemoteFile(file.id);
+   199→      }
+   200→    } catch (err) {
+   201→      console.error('Failed to delete folder:', err);
+   202→    }
+   203→  };
+   204→
+   205→  const handleRenameFolder = async () => {
+   206→    if (!renameTarget || !renameValue.trim()) return;
+   207→    try {
+   208→      const data = await foldersAPI.update(renameTarget.id, { name: renameValue.trim() });
+   209→      updateFolder(renameTarget.id, { name: data.folder.name });
+   210→      setIsRenameDialog(false);
+   211→      setRenameTarget(null);
+   212→    } catch (err) {
+   213→      console.error('Failed to rename folder:', err);
+   214→    }
+   215→  };
+   216→
+   217→  // Build the folder tree recursively
+   218→  const renderFolderTree = (parentId: string | null, depth: number = 0) => {
+   219→    const childFolders = folders
+   220→      .filter(f => f.parentId === parentId)
+   221→      .sort((a, b) => a.name.localeCompare(b.name));
+   222→
+   223→    const filesInFolder = remoteFiles
+   224→      .filter(f => f.folderId === parentId)
+   225→      .sort((a, b) => a.name.localeCompare(b.name));
+   226→
+   227→    return (
+   228→      <>
+   229→        {childFolders.map(folder => (
+   230→          <div key={folder.id}>
+   231→            <div
+   232→              role="button"
+   233→              tabIndex={0}
+   234→              className={`
+   235→                ide-file-item
+   236→                w-full flex items-center gap-1 text-sm group
+   237→              `}
+   238→              style={{ paddingLeft: `${12 + depth * 16}px`, paddingTop: '4px', paddingBottom: '4px' }}
+   239→              onClick={() => toggleFolderExpanded(folder.id)}
+   240→              onKeyDown={(e) => { if (e.key === 'Enter') toggleFolderExpanded(folder.id); }}
+   241→            >
+   242→              {folder.isExpanded ? (
+   243→                <ChevronDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--ide-text-muted)' }} />
+   244→              ) : (
+   245→                <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--ide-text-muted)' }} />
+   246→              )}
+   247→              {folder.isExpanded ? (
+   248→                <FolderOpen className="h-4 w-4 shrink-0" style={{ color: 'var(--ide-accent)' }} />
+   249→              ) : (
+   250→                <Folder className="h-4 w-4 shrink-0" style={{ color: 'var(--ide-accent)' }} />
+   251→              )}
+   252→              <span className="truncate flex-1 text-left text-xs" style={{ color: 'var(--ide-text-secondary)' }}>
+   253→                {folder.name}
+   254→              </span>
+   255→              {/* Folder action buttons — visible on hover */}
+   256→              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+   257→                <Button
+   258→                  variant="ghost"
+   259→                  size="icon"
+   260→                  className="ide-icon-btn h-5 w-5"
+   261→                  style={{ color: 'var(--ide-text-dim)' }}
+   262→                  onClick={(e) => {
+   263→                    e.stopPropagation();
+   264→                    handleNewFile(folder.id);
+   265→                  }}
+   266→                >
+   267→                  <Plus className="h-3 w-3" />
+   268→                </Button>
+   269→                <Button
+   270→                  variant="ghost"
+   271→                  size="icon"
+   272→                  className="ide-icon-btn h-5 w-5"
+   273→                  style={{ color: 'var(--ide-text-dim)' }}
+   274→                  onClick={(e) => {
+   275→                    e.stopPropagation();
+   276→                    setNewFolderParentId(folder.id);
+   277→                    setNewFolderName('');
+   278→                    setIsNewFolderDialog(true);
+   279→                  }}
+   280→                >
+   281→                  <FolderPlus className="h-3 w-3" />
+   282→                </Button>
+   283→                <Button
+   284→                  variant="ghost"
+   285→                  size="icon"
+   286→                  className="ide-icon-btn h-5 w-5"
+   287→                  style={{ color: 'var(--ide-text-dim)' }}
+   288→                  onClick={(e) => {
+   289→                    e.stopPropagation();
+   290→                    setRenameTarget({ id: folder.id, name: folder.name, type: 'folder' });
+   291→                    setRenameValue(folder.name);
+   292→                    setIsRenameDialog(true);
+   293→                  }}
+   294→                >
+   295→                  <Pencil className="h-3 w-3" />
+   296→                </Button>
+   297→                <Button
+   298→                  variant="ghost"
+   299→                  size="icon"
+   300→                  className="ide-icon-btn h-5 w-5"
+   301→                  style={{ color: 'var(--ide-text-dim)' }}
+   302→                  onClick={(e) => handleDeleteFolder(folder.id, e)}
+   303→                  onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-error)'}
+   304→                  onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+   305→                >
+   306→                  <Trash2 className="h-3 w-3" />
+   307→                </Button>
+   308→              </div>
+   309→            </div>
+   310→            {/* Render children if expanded */}
+   311→            {folder.isExpanded && renderFolderTree(folder.id, depth + 1)}
+   312→          </div>
+   313→        ))}
+   314→        {/* Files in this folder */}
+   315→        {filesInFolder.map(file => (
+   316→          <div
+   317→            key={file.id}
+   318→            role="button"
+   319→            tabIndex={0}
+   320→            onClick={() => handleOpenRemoteFile(file)}
+   321→            onKeyDown={(e) => { if (e.key === 'Enter') handleOpenRemoteFile(file); }}
+   322→            className={`
+   323→              ide-file-item
+   324→              w-full flex items-center gap-2 text-sm group
+   325→              ${activeTabId === file.id ? 'bg-[var(--ide-bg-hover)] text-[var(--ide-text-primary)]' : 'text-[var(--ide-text-secondary)]'}
+   326→            `}
+   327→            style={{ paddingLeft: `${28 + depth * 16}px`, paddingTop: '4px', paddingBottom: '4px' }}
+   328→          >
+   329→            <FileIcon language={file.language} />
+   330→            <span className="truncate flex-1 text-left text-xs">{file.name}</span>
+   331→            <Button
+   332→              variant="ghost"
+   333→              size="icon"
+   334→              className="ide-icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
+   335→              style={{ color: 'var(--ide-text-dim)' }}
+   336→              onClick={(e) => handleDeleteFile(file.id, e)}
+   337→              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-error)'}
+   338→              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+   339→            >
+   340→              <Trash2 className="h-3 w-3" />
+   341→            </Button>
+   342→          </div>
+   343→        ))}
+   344→      </>
+   345→    );
+   346→  };
+   347→
+   348→  if (!isSidebarOpen) return null;
+   349→
+   350→  return (
+   351→    <div
+   352→      className="w-64 border-r flex flex-col overflow-hidden"
+   353→      style={{
+   354→        backgroundColor: 'var(--ide-bg-surface)',
+   355→        borderColor: 'var(--ide-border)',
+   356→      }}
+   357→    >
+   358→      {/* Sidebar Header */}
+   359→      <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--ide-border)' }}>
+   360→        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ide-text-muted)' }}>
+   361→          {sidebarView === 'search' ? 'Search' : sidebarView === 'settings' ? 'Settings' : 'Explorer'}
+   362→        </span>
+   363→        <div className="flex items-center gap-1">
+   364→          <TooltipProvider>
+   365→            {sidebarView === 'files' && (
+   366→              <>
+   367→                <Tooltip>
+   368→                  <TooltipTrigger asChild>
+   369→                    <Button
+   370→                      variant="ghost"
+   371→                      size="icon"
+   372→                      className="ide-icon-btn h-6 w-6"
+   373→                      style={{ color: 'var(--ide-text-dim)' }}
+   374→                      onClick={() => handleNewFile(null)}
+   375→                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-text-primary)'}
+   376→                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+   377→                    >
+   378→                      <Plus className="h-3.5 w-3.5" />
+   379→                    </Button>
+   380→                  </TooltipTrigger>
+   381→                  <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   382→                    New File
+   383→                  </TooltipContent>
+   384→                </Tooltip>
+   385→                <Tooltip>
+   386→                  <TooltipTrigger asChild>
+   387→                    <Button
+   388→                      variant="ghost"
+   389→                      size="icon"
+   390→                      className="ide-icon-btn h-6 w-6"
+   391→                      style={{ color: 'var(--ide-text-dim)' }}
+   392→                      onClick={() => {
+   393→                        setNewFolderParentId(null);
+   394→                        setNewFolderName('');
+   395→                        setIsNewFolderDialog(true);
+   396→                      }}
+   397→                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ide-text-primary)'}
+   398→                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ide-text-dim)'}
+   399→                    >
+   400→                      <FolderPlus className="h-3.5 w-3.5" />
+   401→                    </Button>
+   402→                  </TooltipTrigger>
+   403→                  <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   404→                    New Folder
+   405→                  </TooltipContent>
+   406→                </Tooltip>
+   407→                <Tooltip>
+   408→                  <TooltipTrigger asChild>
+   409→                    <Button
+   410→                      variant="ghost"
+   411→                      size="icon"
+   412→                      className="ide-icon-btn h-6 w-6"
+   413→                      style={{ color: 'var(--ide-text-dim)' }}
+   414→                      onClick={loadData}
+   415→                      disabled={isLoading}
+   416→                    >
+   417→                      <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+   418→                    </Button>
+   419→                  </TooltipTrigger>
+   420→                  <TooltipContent side="right" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   421→                    Refresh
+   422→                  </TooltipContent>
+   423→                </Tooltip>
+   424→              </>
+   425→            )}
+   426→          </TooltipProvider>
+   427→        </div>
+   428→      </div>
+   429→
+   430→      {/* Content */}
+   431→      <div className="flex-1 overflow-y-auto custom-scrollbar">
+   432→        {sidebarView === 'files' && (
+   433→          <>
+   434→            <div>
+   435→              <button
+   436→                onClick={() => setIsExpanded(!isExpanded)}
+   437→                className="ide-file-item w-full flex items-center gap-1 px-2 py-1.5 text-xs font-medium"
+   438→                style={{ color: 'var(--ide-text-muted)' }}
+   439→              >
+   440→                {isExpanded ? (
+   441→                  <ChevronDown className="h-3.5 w-3.5" />
+   442→                ) : (
+   443→                  <ChevronRight className="h-3.5 w-3.5" />
+   444→                )}
+   445→                <FolderOpen className="h-3.5 w-3.5 mr-1" style={{ color: 'var(--ide-accent)' }} />
+   446→                MY PROJECT
+   447→              </button>
+   448→              {isExpanded && (
+   449→                <div>
+   450→                  {isAuthenticated ? (
+   451→                    // Authenticated: show server-side file tree with folders
+   452→                    folders.length === 0 && remoteFiles.length === 0 ? (
+   453→                      <div className="px-4 py-3 text-xs" style={{ color: 'var(--ide-text-faint)' }}>
+   454→                        No files yet. Use + to create one!
+   455→                      </div>
+   456→                    ) : (
+   457→                      renderFolderTree(null)
+   458→                    )
+   459→                  ) : (
+   460→                    // Not authenticated: show local folders + local tabs in tree
+   461→                    <>
+   462→                      {/* Show local folders */}
+   463→                      {folders.length > 0 && renderFolderTree(null)}
+   464→                      {/* Show local files not in any folder */}
+   465→                      {tabs.filter(t => !t.isRemote).map(tab => (
+   466→                        <div
+   467→                          key={tab.id}
+   468→                          role="button"
+   469→                          tabIndex={0}
+   470→                          onClick={() => setActiveTab(tab.id)}
+   471→                          onKeyDown={(e) => { if (e.key === 'Enter') setActiveTab(tab.id); }}
+   472→                          className={`
+   473→                            ide-file-item
+   474→                            w-full flex items-center gap-2 text-sm group
+   475→                            ${activeTabId === tab.id ? 'bg-[var(--ide-bg-hover)] text-[var(--ide-text-primary)]' : 'text-[var(--ide-text-secondary)]'}
+   476→                          `}
+   477→                          style={{ paddingLeft: '28px', paddingTop: '4px', paddingBottom: '4px' }}
+   478→                        >
+   479→                          <FileIcon language={tab.language} />
+   480→                          <span className="truncate flex-1 text-left text-xs">{tab.name}</span>
+   481→                          {tab.isDirty && (
+   482→                            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: 'var(--ide-warning)' }} />
+   483→                          )}
+   484→                        </div>
+   485→                      ))}
+   486→                      {tabs.filter(t => !t.isRemote).length === 0 && folders.length === 0 && (
+   487→                        <div className="px-4 py-3 text-xs" style={{ color: 'var(--ide-text-faint)' }}>
+   488→                          No files open. Use + to create one!
+   489→                        </div>
+   490→                      )}
+   491→                      <div className="px-4 py-3 text-center">
+   492→                        <p className="text-[10px] mb-2" style={{ color: 'var(--ide-text-faint)' }}>
+   493→                          Sign in to save files & use folders
+   494→                        </p>
+   495→                        <Button
+   496→                          size="sm"
+   497→                          className="ide-btn-hover text-[10px] h-6"
+   498→                          style={{ backgroundColor: 'var(--ide-accent)', color: 'var(--ide-bg-base)' }}
+   499→                          onClick={() => openAuthModal('login')}
+   500→                        >
+   501→                          Sign In
+   502→                        </Button>
+   503→                      </div>
+   504→                    </>
+   505→                  )}
+   506→                </div>
+   507→              )}
+   508→            </div>
+   509→          </>
+   510→        )}
+   511→
+   512→        {sidebarView === 'search' && (
+   513→          <div className="p-3">
+   514→            <Input
+   515→              placeholder="Search files..."
+   516→              style={{
+   517→                backgroundColor: 'var(--ide-bg-overlay)',
+   518→                borderColor: 'var(--ide-border)',
+   519→                color: 'var(--ide-text-primary)',
+   520→              }}
+   521→              className="text-xs placeholder:text-[var(--ide-text-faint)]"
+   522→            />
+   523→            <p className="text-xs mt-3" style={{ color: 'var(--ide-text-faint)' }}>Search functionality coming soon</p>
+   524→          </div>
+   525→        )}
+   526→
+   527→        {sidebarView === 'settings' && (
+   528→          <div className="p-3 space-y-3">
+   529→            <p className="text-xs font-medium" style={{ color: 'var(--ide-text-faint)' }}>Settings</p>
+   530→            <div className="space-y-2">
+   531→              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Font Size: 14px</p>
+   532→              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Tab Size: 4</p>
+   533→              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Auto Save: On</p>
+   534→              <p className="text-xs" style={{ color: 'var(--ide-text-muted)' }}>Theme: {useIDEStore.getState().theme === 'dark' ? 'Dark' : 'Light'}</p>
+   535→            </div>
+   536→          </div>
+   537→        )}
+   538→      </div>
+   539→
+   540→      {/* New File Dialog */}
+   541→      <Dialog open={isNewFileDialog} onOpenChange={setIsNewFileDialog}>
+   542→        <DialogContent className="sm:max-w-[400px]" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   543→          <DialogHeader>
+   544→            <DialogTitle>Create New File</DialogTitle>
+   545→            <DialogDescription style={{ color: 'var(--ide-text-muted)' }}>
+   546→              Choose a name and language for your new file
+   547→            </DialogDescription>
+   548→          </DialogHeader>
+   549→          <div className="space-y-4 mt-2">
+   550→            <div className="space-y-2">
+   551→              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>File Name</label>
+   552→              <Input
+   553→                placeholder="main"
+   554→                value={newFileName}
+   555→                onChange={(e) => setNewFileName(e.target.value)}
+   556→                style={{
+   557→                  backgroundColor: 'var(--ide-bg-overlay)',
+   558→                  borderColor: 'var(--ide-border)',
+   559→                  color: 'var(--ide-text-primary)',
+   560→                }}
+   561→                className="placeholder:text-[var(--ide-text-faint)]"
+   562→                onKeyDown={(e) => e.key === 'Enter' && handleCreateFile()}
+   563→              />
+   564→            </div>
+   565→            <div className="space-y-2">
+   566→              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Language</label>
+   567→              <Select value={newFileLanguage} onValueChange={setNewFileLanguage}>
+   568→                <SelectTrigger style={{ backgroundColor: 'var(--ide-bg-overlay)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   569→                  <SelectValue />
+   570→                </SelectTrigger>
+   571→                <SelectContent style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)' }}>
+   572→                  {Object.entries(LANGUAGE_NAMES).map(([key, name]) => (
+   573→                    <SelectItem key={key} value={key} style={{ color: 'var(--ide-text-primary)' }}>
+   574→                      {name}
+   575→                    </SelectItem>
+   576→                  ))}
+   577→                </SelectContent>
+   578→              </Select>
+   579→            </div>
+   580→            {/* Folder selector */}
+   581→            {folders.length > 0 && (
+   582→              <div className="space-y-2">
+   583→                <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Folder (optional)</label>
+   584→                <Select value={newFileFolderId || '__root__'} onValueChange={(v) => setNewFileFolderId(v === '__root__' ? null : v)}>
+   585→                  <SelectTrigger style={{ backgroundColor: 'var(--ide-bg-overlay)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   586→                    <SelectValue />
+   587→                  </SelectTrigger>
+   588→                  <SelectContent style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)' }}>
+   589→                    <SelectItem value="__root__" style={{ color: 'var(--ide-text-primary)' }}>Root</SelectItem>
+   590→                    {folders.map(f => (
+   591→                      <SelectItem key={f.id} value={f.id} style={{ color: 'var(--ide-text-primary)' }}>
+   592→                        📁 {f.name}
+   593→                      </SelectItem>
+   594→                    ))}
+   595→                  </SelectContent>
+   596→                </Select>
+   597→              </div>
+   598→            )}
+   599→            <Button
+   600→              onClick={handleCreateFile}
+   601→              className="ide-btn-hover w-full font-medium"
+   602→              style={{ backgroundColor: 'var(--ide-success)', color: 'var(--ide-bg-base)' }}
+   603→              disabled={!newFileName.trim()}
+   604→            >
+   605→              Create File
+   606→            </Button>
+   607→          </div>
+   608→        </DialogContent>
+   609→      </Dialog>
+   610→
+   611→      {/* New Folder Dialog */}
+   612→      <Dialog open={isNewFolderDialog} onOpenChange={setIsNewFolderDialog}>
+   613→        <DialogContent className="sm:max-w-[400px]" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   614→          <DialogHeader>
+   615→            <DialogTitle>Create New Folder</DialogTitle>
+   616→            <DialogDescription style={{ color: 'var(--ide-text-muted)' }}>
+   617→              Enter a name for the new folder
+   618→            </DialogDescription>
+   619→          </DialogHeader>
+   620→          <div className="space-y-4 mt-2">
+   621→            <div className="space-y-2">
+   622→              <label className="text-xs" style={{ color: 'var(--ide-text-secondary)' }}>Folder Name</label>
+   623→              <Input
+   624→                placeholder="src"
+   625→                value={newFolderName}
+   626→                onChange={(e) => setNewFolderName(e.target.value)}
+   627→                style={{
+   628→                  backgroundColor: 'var(--ide-bg-overlay)',
+   629→                  borderColor: 'var(--ide-border)',
+   630→                  color: 'var(--ide-text-primary)',
+   631→                }}
+   632→                className="placeholder:text-[var(--ide-text-faint)]"
+   633→                onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
+   634→                autoFocus
+   635→              />
+   636→            </div>
+   637→            <Button
+   638→              onClick={handleCreateFolder}
+   639→              className="ide-btn-hover w-full font-medium"
+   640→              style={{ backgroundColor: 'var(--ide-accent)', color: 'var(--ide-bg-base)' }}
+   641→              disabled={!newFolderName.trim()}
+   642→            >
+   643→              Create Folder
+   644→            </Button>
+   645→          </div>
+   646→        </DialogContent>
+   647→      </Dialog>
+   648→
+   649→      {/* Rename Dialog */}
+   650→      <Dialog open={isRenameDialog} onOpenChange={setIsRenameDialog}>
+   651→        <DialogContent className="sm:max-w-[400px]" style={{ backgroundColor: 'var(--ide-bg-base)', borderColor: 'var(--ide-border)', color: 'var(--ide-text-primary)' }}>
+   652→          <DialogHeader>
+   653→            <DialogTitle>Rename {renameTarget?.type === 'folder' ? 'Folder' : 'File'}</DialogTitle>
+   654→            <DialogDescription style={{ color: 'var(--ide-text-muted)' }}>
+   655→              Enter the new name
+   656→            </DialogDescription>
+   657→          </DialogHeader>
+   658→          <div className="space-y-4 mt-2">
+   659→            <Input
+   660→              value={renameValue}
+   661→              onChange={(e) => setRenameValue(e.target.value)}
+   662→              style={{
+   663→                backgroundColor: 'var(--ide-bg-overlay)',
+   664→                borderColor: 'var(--ide-border)',
+   665→                color: 'var(--ide-text-primary)',
+   666→              }}
+   667→              onKeyDown={(e) => e.key === 'Enter' && handleRenameFolder()}
+   668→              autoFocus
+   669→            />
+   670→            <Button
+   671→              onClick={handleRenameFolder}
+   672→              className="ide-btn-hover w-full font-medium"
+   673→              style={{ backgroundColor: 'var(--ide-accent)', color: 'var(--ide-bg-base)' }}
+   674→              disabled={!renameValue.trim()}
+   675→            >
+   676→              Rename
+   677→            </Button>
+   678→          </div>
+   679→        </DialogContent>
+   680→      </Dialog>
+   681→    </div>
+   682→  );
+   683→}
+   684→

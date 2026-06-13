@@ -3,7 +3,7 @@
 import React, { useRef, useCallback, useEffect } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { useIDEStore, type Diagnostic } from '@/store/useIDEStore';
-import { LANGUAGE_MONACO, DEFAULT_CODE } from '@/lib/api';
+import { LANGUAGE_MONACO, CODE_TEMPLATES } from '@/lib/api';
 import { validationManager } from '@/lib/validation';
 import { registerCompletionProviders } from '@/lib/completions';
 import { setEditorInstance } from '@/components/ide/ProblemsPanel';
@@ -88,8 +88,12 @@ function diagnosticsToMarkers(diagnostics: Diagnostic[], monaco: any): any[] {
 export function CodeEditor() {
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
-  const { tabs, activeTabId, language, updateTabContent, setDiagnostics, setValidationStatus, theme } = useIDEStore();
+  // Store Monaco view state per tab for cursor/scroll position persistence
+  const viewStatesRef = useRef<Map<string, any>>(new Map());
+
+  const { tabs, activeTabId, language, updateTabContent, updateTabCursor, setDiagnostics, setValidationStatus, theme, settings } = useIDEStore();
   const activeTab = tabs.find(t => t.id === activeTabId);
+  const prevActiveTabIdRef = useRef<string | null>(null);
 
   // ─── Apply diagnostics to Monaco editor + update store ────────────────
   const applyDiagnostics = useCallback((diagnostics: Diagnostic[]) => {
@@ -100,11 +104,8 @@ export function CodeEditor() {
     const model = editor.getModel();
     if (!model) return;
 
-    // 1. Set Monaco markers (red squiggly underlines, gutter icons, overview ruler)
     const markers = diagnosticsToMarkers(diagnostics, monaco);
     monaco.editor.setModelMarkers(model, 'codeforge-validator', markers);
-
-    // 2. Update the store so ProblemsPanel can read them
     setDiagnostics(diagnostics);
   }, [setDiagnostics]);
 
@@ -116,6 +117,56 @@ export function CodeEditor() {
     });
   }, [applyDiagnostics, setValidationStatus]);
 
+  // ─── Save view state for current tab before switching ────────────────
+  const saveCurrentViewState = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !prevActiveTabIdRef.current) return;
+    const viewState = editor.saveViewState();
+    if (viewState) {
+      viewStatesRef.current.set(prevActiveTabIdRef.current, viewState);
+    }
+  }, []);
+
+  // ─── Restore view state for new active tab ────────────────────────────
+  const restoreViewState = useCallback((tabId: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const viewState = viewStatesRef.current.get(tabId);
+    if (viewState) {
+      editor.restoreViewState(viewState);
+    }
+  }, []);
+
+  // ─── Track cursor position changes ────────────────────────────────────
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !activeTabId) return;
+
+    const disposable = editor.onDidChangeCursorPosition((e: any) => {
+      if (activeTabId) {
+        updateTabCursor(activeTabId, e.position.lineNumber, e.position.column);
+      }
+    });
+
+    return () => disposable.dispose();
+  }, [activeTabId, updateTabCursor]);
+
+  // ─── Save/restore view state when switching tabs ──────────────────────
+  useEffect(() => {
+    if (prevActiveTabIdRef.current && prevActiveTabIdRef.current !== activeTabId) {
+      saveCurrentViewState();
+    }
+    if (activeTabId) {
+      // Small delay to let Monaco set the new content first
+      const timer = setTimeout(() => {
+        restoreViewState(activeTabId);
+      }, 10);
+      prevActiveTabIdRef.current = activeTabId;
+      return () => clearTimeout(timer);
+    }
+    prevActiveTabIdRef.current = activeTabId;
+  }, [activeTabId, saveCurrentViewState, restoreViewState]);
+
   // ─── Editor Mount ─────────────────────────────────────────────────────
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
@@ -124,26 +175,26 @@ export function CodeEditor() {
     // Register the editor instance globally so ProblemsPanel can navigate to errors
     setEditorInstance(editor);
 
-    // Set editor options
+    // Set editor options from settings
     editor.updateOptions({
-      fontSize: 14,
+      fontSize: settings.fontSize,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
       fontLigatures: true,
-      minimap: { enabled: true, scale: 1 },
+      minimap: { enabled: settings.minimap, scale: 1 },
       scrollBeyondLastLine: false,
       smoothScrolling: true,
-      cursorBlinking: 'smooth',
+      cursorBlinking: settings.cursorBlinking,
       cursorSmoothCaretAnimation: 'on',
-      renderWhitespace: 'selection',
-      bracketPairColorization: { enabled: true },
+      renderWhitespace: settings.renderWhitespace,
+      bracketPairColorization: { enabled: settings.bracketPairColorization },
       guides: {
         bracketPairs: true,
         indentation: true,
       },
       padding: { top: 8 },
-      lineHeight: 22,
-      tabSize: 4,
-      wordWrap: 'on',
+      lineHeight: settings.lineHeight,
+      tabSize: settings.tabSize,
+      wordWrap: settings.wordWrap,
       automaticLayout: true,
       suggest: {
         showKeywords: true,
@@ -157,7 +208,6 @@ export function CodeEditor() {
     });
 
     // ─── Configure JavaScript/TypeScript Diagnostics ────────────────────────
-    // Enable Monaco's built-in JS validation
     monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,
       noSyntaxValidation: false,
@@ -251,7 +301,6 @@ export function CodeEditor() {
         'editorBracketMatch.border': '#89b4fa',
         'editorOverviewRuler.border': '#313244',
         'minimap.background': '#181825',
-        // Error and warning squiggly lines
         'editorError.foreground': '#f38ba8',
         'editorError.background': '#f38ba815',
         'editorWarning.foreground': '#f9e2af',
@@ -260,22 +309,17 @@ export function CodeEditor() {
         'editorInfo.background': '#89b4fa15',
         'editorHint.foreground': '#94e2d5',
         'editorHint.background': '#94e2d515',
-        // Gutter markers
         'editorGutter.modifiedBackground': '#f9e2af',
         'editorGutter.addedBackground': '#a6e3a1',
         'editorGutter.deletedBackground': '#f38ba8',
-        // Overview ruler markers — red marks on scrollbar
         'editorOverviewRuler.errorForeground': '#f38ba8',
         'editorOverviewRuler.warningForeground': '#f9e2af',
         'editorOverviewRuler.infoForeground': '#89b4fa',
-        // Problems pane
         'problemsErrorIcon.foreground': '#f38ba8',
         'problemsWarningIcon.foreground': '#f9e2af',
         'problemsInfoIcon.foreground': '#89b4fa',
-        // Squiggly line styling
         'editorUnnecessaryCode.opacity': '#00000066',
         'editorUnnecessaryCode.border': '#585b70',
-        // Marker navigation
         'editorMarkerNavigationError.background': '#f38ba8',
         'editorMarkerNavigationWarning.background': '#f9e2af',
         'editorMarkerNavigationInfo.background': '#89b4fa',
@@ -304,7 +348,15 @@ export function CodeEditor() {
         scheduleValidation(code, lang);
       });
     }
-  }, [scheduleValidation]);
+
+    // ─── Track cursor position ──────────────────────────────────────────────
+    editor.onDidChangeCursorPosition((e: any) => {
+      const id = useIDEStore.getState().activeTabId;
+      if (id) {
+        useIDEStore.getState().updateTabCursor(id, e.position.lineNumber, e.position.column);
+      }
+    });
+  }, [scheduleValidation, settings]);
 
   const handleEditorChange = useCallback((value: string | undefined) => {
     if (activeTabId && value !== undefined) {
@@ -323,6 +375,22 @@ export function CodeEditor() {
       }
     }
   }, [theme]);
+
+  // Apply settings changes to Monaco editor
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.updateOptions({
+      fontSize: settings.fontSize,
+      tabSize: settings.tabSize,
+      wordWrap: settings.wordWrap,
+      minimap: { enabled: settings.minimap },
+      cursorBlinking: settings.cursorBlinking,
+      renderWhitespace: settings.renderWhitespace,
+      bracketPairColorization: { enabled: settings.bracketPairColorization },
+      lineHeight: settings.lineHeight,
+    });
+  }, [settings.fontSize, settings.tabSize, settings.wordWrap, settings.minimap, settings.cursorBlinking, settings.renderWhitespace, settings.bracketPairColorization, settings.lineHeight]);
 
   // Re-validate when language changes
   useEffect(() => {
@@ -375,7 +443,8 @@ export function CodeEditor() {
                 onClick={() => {
                   const { addTab } = useIDEStore.getState();
                   const ext = lang === 'python' ? '.py' : lang === 'javascript' ? '.js' : lang === 'cpp' ? '.cpp' : lang === 'c' ? '.c' : '.java';
-                  addTab(`main${ext}`, lang, DEFAULT_CODE[lang]);
+                  // Create EMPTY files — no boilerplate
+                  addTab(`untitled${ext}`, lang);
                 }}
                 className="ide-lang-btn px-3 py-1.5 text-xs rounded-md border"
                 style={{ backgroundColor: 'var(--ide-bg-hover)', color: 'var(--ide-text-primary)', borderColor: 'var(--ide-border-light)' }}
@@ -403,18 +472,19 @@ export function CodeEditor() {
         onMount={handleEditorMount}
         theme={theme === 'light' ? 'vs' : 'codeforge-dark'}
         options={{
-          fontSize: 14,
+          fontSize: settings.fontSize,
           fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-          minimap: { enabled: true },
+          minimap: { enabled: settings.minimap },
           scrollBeyondLastLine: false,
           smoothScrolling: true,
-          cursorBlinking: 'smooth',
-          bracketPairColorization: { enabled: true },
+          cursorBlinking: settings.cursorBlinking,
+          bracketPairColorization: { enabled: settings.bracketPairColorization },
           guides: { bracketPairs: true, indentation: true },
           padding: { top: 8 },
-          lineHeight: 22,
-          tabSize: 4,
-          wordWrap: 'on',
+          lineHeight: settings.lineHeight,
+          tabSize: settings.tabSize,
+          wordWrap: settings.wordWrap,
+          renderWhitespace: settings.renderWhitespace,
           automaticLayout: true,
         }}
         loading={
