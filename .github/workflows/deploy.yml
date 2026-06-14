@@ -1,0 +1,120 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: "22"
+  BUN_VERSION: "1.2"
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: 🥟 Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 📦 Install dependencies
+        run: bun install
+
+      - name: 🗄️ Setup database
+        run: |
+          bun run db:generate
+          bun run db:push
+        env:
+          DATABASE_URL: file:./db/test.db
+
+      - name: 🔍 Lint
+        run: bun run lint
+
+      - name: 🏗️ Build
+        run: bun run build
+        env:
+          DATABASE_URL: file:./db/test.db
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  deploy:
+    name: Deploy to Production
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: 🥟 Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 📦 Install dependencies
+        run: bun install
+
+      - name: 🗄️ Setup database
+        run: |
+          bun run db:generate
+          bun run db:push
+        env:
+          DATABASE_URL: file:./db/production.db
+
+      - name: 🏗️ Build
+        run: bun run build
+        env:
+          DATABASE_URL: file:./db/production.db
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      # ─── Choose your deployment platform ──────────────────────────────────
+      # Uncomment ONE of the following deployment options:
+
+      # Option A: Deploy to Vercel
+      # - name: 🚀 Deploy to Vercel
+      #   uses: amondnet/vercel-action@v25
+      #   with:
+      #     vercel-token: ${{ secrets.VERCEL_TOKEN }}
+      #     vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+      #     vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+      #     vercel-args: "--prod"
+
+      # Option B: Deploy to Railway
+      # - name: 🚀 Deploy to Railway
+      #   uses: bervProject/railway-deploy@v1
+      #   with:
+      #     railway_token: ${{ secrets.RAILWAY_TOKEN }}
+      #     service: ${{ secrets.RAILWAY_SERVICE }}
+
+      # Option C: Deploy via SSH
+      # - name: 🚀 Deploy via SSH
+      #   uses: appleboy/ssh-action@v1
+      #   with:
+      #     host: ${{ secrets.DEPLOY_HOST }}
+      #     username: ${{ secrets.DEPLOY_USER }}
+      #     key: ${{ secrets.DEPLOY_SSH_KEY }}
+      #     script: |
+      #       cd /app/codeforge-ide
+      #       git pull origin main
+      #       bun install
+      #       bun run build
+      #       pm2 restart codeforge

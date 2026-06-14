@@ -1,7 +1,7 @@
 {
-  "name": "nextjs_tailwind_shadcn_ts",
-  "version": "0.2.0",
-  "private": true,
+  "name": "codeforge-ide",
+  "version": "1.0.0",
+  "private": false,
   "scripts": {
     "dev": "NODE_OPTIONS='--max-old-space-size=512' npx tsx server.ts >> dev.log 2>&1",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
