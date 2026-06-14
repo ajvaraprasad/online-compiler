@@ -23,6 +23,7 @@ node_modules
 # misc
 .DS_Store
 *.pem
+Thumbs.db
 
 # debug
 npm-debug.log*
@@ -30,25 +31,74 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files — NEVER commit secrets
+.env
+.env.local
+.env.*.local
 
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-local-*
-.claude
-.z-ai-config
+
+# logs
 *.log
 dev.log
 dev.out.log
-test
-prompt
-
 server.log
-# Skills directory
+
+# IDE / AI config
+.claude
+.z-ai-config
+local-*
+
+# database
+db/*.db
+db/*.db-journal
+
+# Skills directory (internal tooling)
 /skills/
+
+# Tool results (internal)
+/tool-results/
+/agent-ctx/
+
+# Screenshots (internal)
+screenshot-*.png
+test-screenshot*.png
+screenshot_*.png
+browser-verification.png
+test-run.png
+final-screenshot.png
+
+# Uploads (internal)
+/upload/
+/download/
+
+# Bun lock (regenerate with bun install)
+bun.lock
+
+# Mini service dependencies (regenerate with npm install)
+mini-services/terminal-service/node_modules/
+mini-services/terminal-service/bun.lock
+mini-services/terminal-service/package-lock.json
+
+# Start scripts (environment-specific)
+start-dev.sh
+start-all.sh
+launch.sh
+launch-server.sh
+run-server.sh
+keep-alive.sh
+watchdog.sh
+
+# Examples (reference only, not needed for deployment)
+/examples/
+
+# Caddy config (deployment-specific)
+Caddyfile
+
+# z-scripts (internal build scripts)
+/.zscripts/
