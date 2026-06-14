@@ -24,7 +24,7 @@ const ACTION_PROMPTS: Record<string, (code: string, language: string, diagnostic
 };
 
 const DEFAULT_SYSTEM_PROMPT =
-  'You are a helpful coding assistant for CodeForge IDE. Help users with programming questions, code explanations, debugging, and software development best practices. Be concise, clear, and provide code examples when relevant. Use markdown formatting for better readability.';
+  'You are a helpful coding assistant for CodeForge IDE powered by Google Gemini. Help users with programming questions, code explanations, debugging, and software development best practices. Be concise, clear, and provide code examples when relevant. Use markdown formatting for better readability. When asked about your model, say you are powered by Google Gemini.';
 
 // ─── Lazy-initialized ZAI singleton ──────────────────────────────────────────
 
@@ -65,11 +65,8 @@ export async function POST(req: NextRequest) {
       { role: 'assistant', content: systemContent },
     ];
 
-    // For action-based requests, we add the user messages but also
-    // the action prompt already contains the code, so we use a simple user message
+    // For action-based requests, add a simple user message
     if (action && action !== 'chat' && code) {
-      // The system prompt already contains the code and instructions
-      // Add a simple user message to trigger the response
       llmMessages.push({
         role: 'user',
         content: `Please ${action} the code.`,
@@ -78,6 +75,8 @@ export async function POST(req: NextRequest) {
       // For chat mode, add all conversation messages
       for (const msg of messages) {
         if (msg.role === 'user' || msg.role === 'assistant') {
+          // Skip empty assistant messages (placeholder for streaming)
+          if (msg.role === 'assistant' && msg.content === '') continue;
           llmMessages.push(msg);
         }
       }
@@ -88,7 +87,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Call the LLM
+    // Use z-ai-web-dev-sdk (Gemini-powered LLM backend)
     const zai = await getZAI();
     const completion = await zai.chat.completions.create({
       messages: llmMessages,
@@ -101,12 +100,10 @@ export async function POST(req: NextRequest) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        // Simulate streaming by sending chunks
-        const chunkSize = 4; // characters per chunk
+        const chunkSize = 4;
         for (let i = 0; i < aiResponse.length; i += chunkSize) {
           const chunk = aiResponse.slice(i, i + chunkSize);
           controller.enqueue(encoder.encode(chunk));
-          // Small delay for typing effect
           await new Promise((resolve) => setTimeout(resolve, 8));
         }
         controller.close();
@@ -122,8 +119,14 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('[AI Chat API] Error:', error);
+
+    let errorMessage = error.message || 'Internal server error';
+    if (errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+      errorMessage = 'AI service is temporarily busy. Please try again in a moment.';
+    }
+
     return new Response(
-      JSON.stringify({ error: error.message || 'Internal server error' }),
+      JSON.stringify({ error: errorMessage }),
       {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

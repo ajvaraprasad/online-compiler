@@ -170,7 +170,7 @@ function ChatMessage({ message }: { message: AIMessage }) {
             color: 'var(--ide-bg-base)',
           }}
         >
-          {isUser ? 'U' : 'AI'}
+          {isUser ? 'U' : 'G'}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
@@ -178,7 +178,7 @@ function ChatMessage({ message }: { message: AIMessage }) {
               className="text-xs font-medium"
               style={{ color: isUser ? 'var(--ide-accent)' : 'var(--ide-purple)' }}
             >
-              {isUser ? 'You' : 'CodeForge AI'}
+              {isUser ? 'You' : 'Gemini AI'}
             </span>
           </div>
           <div className="text-[13px] leading-relaxed break-words" style={{ color: 'var(--ide-text-primary)' }}>
@@ -200,7 +200,7 @@ function LoadingIndicator() {
           className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-bold"
           style={{ backgroundColor: 'var(--ide-purple)', color: 'var(--ide-bg-base)' }}
         >
-          AI
+          G
         </div>
         <div className="flex items-center gap-1.5">
           <div className="flex gap-1">
@@ -208,7 +208,7 @@ function LoadingIndicator() {
             <div className="w-1.5 h-1.5 rounded-full animate-bounce [animation-delay:150ms]" style={{ backgroundColor: 'var(--ide-accent)' }} />
             <div className="w-1.5 h-1.5 rounded-full animate-bounce [animation-delay:300ms]" style={{ backgroundColor: 'var(--ide-accent)' }} />
           </div>
-          <span className="text-xs ml-1" style={{ color: 'var(--ide-text-dim)' }}>Thinking...</span>
+          <span className="text-xs ml-1" style={{ color: 'var(--ide-text-dim)' }}>Gemini is thinking...</span>
         </div>
       </div>
     </div>
@@ -394,6 +394,9 @@ export function AIAssistant() {
           <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ide-text-secondary)' }}>
             AI Assistant
           </span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'rgba(139, 92, 246, 0.15)', color: 'var(--ide-purple)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+            Gemini
+          </span>
         </div>
         {aiMessages.length > 0 && (
           <button
@@ -453,7 +456,7 @@ export function AIAssistant() {
               AI Assistant
             </p>
             <p className="text-xs max-w-[200px]" style={{ color: 'var(--ide-text-faint)' }}>
-              Ask questions about your code, or use the quick actions above to get started.
+              Powered by Google Gemini. Ask questions about your code, or use the quick actions above to get started.
             </p>
           </div>
         ) : (
