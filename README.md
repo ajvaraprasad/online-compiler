@@ -23,7 +23,7 @@
 
 <br/>
 
-[🚀 Live Demo](#-getting-started) · [✨ Features](#-features) · [🛠️ Tech Stack](#-tech-stack) · [📁 Architecture](#-architecture) · [🤝 Contributing](#-contributing)
+[🚀 Live Demo](https://ajvaraprasad.github.io/online-compiler/) · [✨ Features](#-features) · [🛠️ Tech Stack](#-tech-stack) · [📁 Architecture](#-architecture) · [🤝 Contributing](#-contributing)
 
 <br/>
 
