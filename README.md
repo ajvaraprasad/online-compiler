@@ -200,8 +200,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/codeforge-ide.git
-cd codeforge-ide
+git clone https://github.com/ajvaraprasad/online-compiler.git
+cd online-compiler
 
 # Install dependencies
 bun install
@@ -311,7 +311,7 @@ User Query
 <summary>📂 Full project structure</summary>
 
 ```
-codeforge-ide/
+online-compiler/
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml              # CI/CD pipeline
@@ -491,7 +491,7 @@ model CodeFile {
 <details>
 <summary>🌐 Deploy to Vercel</summary>
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-username/codeforge-ide)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/ajvaraprasad/online-compiler)
 
 1. Fork this repository
 2. Import it on [Vercel](https://vercel.com/new)
@@ -523,8 +523,8 @@ model CodeFile {
 
 ```bash
 # On your server
-git clone https://github.com/your-username/codeforge-ide.git
-cd codeforge-ide
+git clone https://github.com/ajvaraprasad/online-compiler.git
+cd online-compiler
 
 # Install dependencies
 bun install
@@ -570,7 +570,7 @@ Contributions are welcome! Here's how you can help:
 
 ## 🐛 Bug Reports
 
-Found a bug? Please [open an issue](https://github.com/your-username/codeforge-ide/issues) with:
+Found a bug? Please [open an issue](https://github.com/ajvaraprasad/online-compiler/issues) with:
 
 - Steps to reproduce
 - Expected vs actual behavior
