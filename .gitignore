@@ -102,3 +102,11 @@ Caddyfile
 
 # z-scripts (internal build scripts)
 /.zscripts/
+
+# Internal ZIP archives
+*.zip
+
+# Uploads & screenshots
+/upload/
+/screenshot-initial*.png
+/screenshot-ai-panel*.png
