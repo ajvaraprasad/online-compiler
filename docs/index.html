@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeForge IDE — Online Compiler with Gemini AI</title>
+    <meta name="description" content="Write, compile, and run code in your browser. Powered by Google Gemini AI for intelligent code assistance.">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #111118;
+            --bg-card: #16161e;
+            --bg-elevated: #1c1c26;
+            --border: #2a2a3a;
+            --border-light: #353548;
+            --text-primary: #e4e4ef;
+            --text-secondary: #9d9db5;
+            --text-muted: #6b6b85;
+            --accent: #8B5CF6;
+            --accent-light: #A78BFA;
+            --accent-dim: rgba(139, 92, 246, 0.15);
+            --cyan: #06B6D4;
+            --green: #10B981;
+            --red: #EF4444;
+            --yellow: #F59E0B;
+            --pink: #EC4899;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* ─── Animated Background ──────────────────────────────── */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(139, 92, 246, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(139, 92, 246, 0.03) 1px, transparent 1px);
+            background-size: 60px 60px;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .bg-glow {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.15;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .bg-glow-1 {
+            top: -200px;
+            right: -100px;
+            background: var(--accent);
+        }
+
+        .bg-glow-2 {
+            bottom: -200px;
+            left: -100px;
+            background: var(--cyan);
+        }
+
+        /* ─── Navigation ───────────────────────────────────────── */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            backdrop-filter: blur(20px);
+            background: rgba(10, 10, 15, 0.8);
+            border-bottom: 1px solid var(--border);
+            padding: 0 2rem;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: var(--text-primary);
+        }
+
+        .nav-brand-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent), var(--cyan));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 14px;
+            color: white;
+        }
+
+        .nav-brand-text {
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .nav-cta {
+            background: var(--accent) !important;
+            color: white !important;
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-weight: 600 !important;
+            transition: all 0.2s !important;
+        }
+
+        .nav-cta:hover {
+            background: var(--accent-light) !important;
+            transform: translateY(-1px);
+        }
+
+        /* ─── Hero Section ─────────────────────────────────────── */
+        .hero {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 160px 2rem 80px;
+            text-align: center;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            background: var(--accent-dim);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 100px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--accent-light);
+            margin-bottom: 24px;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        .hero-badge .dot {
+            width: 6px;
+            height: 6px;
+            background: var(--green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 900;
+            letter-spacing: -2px;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            animation: fadeInUp 0.6s ease-out 0.1s both;
+        }
+
+        .hero h1 .gradient {
+            background: linear-gradient(135deg, var(--accent), var(--cyan), var(--accent-light));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto 40px;
+            animation: fadeInUp 0.6s ease-out 0.2s both;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+            animation: fadeInUp 0.6s ease-out 0.3s both;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.25s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #7C3AED);
+            color: white;
+            box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(139, 92, 246, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-light);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        /* ─── IDE Preview ──────────────────────────────────────── */
+        .ide-preview {
+            position: relative;
+            z-index: 1;
+            max-width: 1100px;
+            margin: 0 auto 80px;
+            padding: 0 2rem;
+            animation: fadeInUp 0.8s ease-out 0.4s both;
+        }
+
+        .ide-window {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow:
+                0 4px 6px rgba(0, 0, 0, 0.3),
+                0 20px 60px rgba(0, 0, 0, 0.4),
+                0 0 100px rgba(139, 92, 246, 0.08);
+        }
+
+        .ide-titlebar {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            gap: 8px;
+        }
+
+        .ide-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .ide-dot.red { background: #FF5F57; }
+        .ide-dot.yellow { background: #FEBC2E; }
+        .ide-dot.green { background: #28C840; }
+
+        .ide-titlebar-text {
+            flex: 1;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .ide-body {
+            display: flex;
+            min-height: 420px;
+        }
+
+        .ide-sidebar {
+            width: 48px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 12px;
+            gap: 8px;
+        }
+
+        .ide-sidebar-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: var(--text-muted);
+            transition: all 0.2s;
+        }
+
+        .ide-sidebar-icon.active {
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+            border-left: 2px solid var(--accent);
+        }
+
+        .ide-sidebar-icon.purple {
+            color: var(--accent-light);
+        }
+
+        .ide-editor-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .ide-tabs {
+            display: flex;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .ide-tab {
+            padding: 8px 16px;
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-muted);
+            border-right: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ide-tab.active {
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--accent);
+        }
+
+        .ide-tab .file-icon {
+            width: 14px;
+            height: 14px;
+        }
+
+        .ide-code {
+            flex: 1;
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            overflow: auto;
+        }
+
+        .ide-code .line {
+            display: flex;
+        }
+
+        .ide-code .line-num {
+            width: 40px;
+            color: var(--text-muted);
+            text-align: right;
+            padding-right: 16px;
+            user-select: none;
+        }
+
+        .ide-code .line-content {
+            flex: 1;
+        }
+
+        /* Syntax highlighting */
+        .syn-keyword { color: #C792EA; }
+        .syn-function { color: #82AAFF; }
+        .syn-string { color: #C3E88D; }
+        .syn-number { color: #F78C6C; }
+        .syn-comment { color: #546E7A; font-style: italic; }
+        .syn-type { color: #FFCB6B; }
+        .syn-operator { color: #89DDFF; }
+        .syn-variable { color: #F07178; }
+        .syn-builtin { color: #82AAFF; }
+
+        .ide-ai-panel {
+            width: 300px;
+            background: var(--bg-card);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .ide-ai-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .gemini-badge {
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 100px;
+            background: var(--accent-dim);
+            color: var(--accent-light);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .ide-ai-body {
+            flex: 1;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .ai-quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .ai-action-btn {
+            padding: 4px 10px;
+            font-size: 11px;
+            border-radius: 6px;
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            font-family: 'Inter', sans-serif;
+            cursor: default;
+        }
+
+        .ai-message {
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .ai-message.assistant {
+            background: var(--accent-dim);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            color: var(--text-primary);
+        }
+
+        .ai-message.user {
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            text-align: right;
+        }
+
+        .ide-terminal {
+            height: 100px;
+            background: #0d0d14;
+            border-top: 1px solid var(--border);
+            padding: 12px 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--green);
+            line-height: 1.6;
+        }
+
+        .terminal-prompt {
+            color: var(--cyan);
+        }
+
+        .terminal-output {
+            color: var(--text-secondary);
+        }
+
+        /* ─── Features Section ─────────────────────────────────── */
+        .features {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 80px 2rem;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .section-header h2 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            letter-spacing: -1px;
+            margin-bottom: 16px;
+        }
+
+        .section-header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 30px rgba(139, 92, 246, 0.1);
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            margin-bottom: 16px;
+        }
+
+        .feature-icon.purple { background: var(--accent-dim); }
+        .feature-icon.cyan { background: rgba(6, 182, 212, 0.15); }
+        .feature-icon.green { background: rgba(16, 185, 129, 0.15); }
+        .feature-icon.red { background: rgba(239, 68, 68, 0.15); }
+        .feature-icon.yellow { background: rgba(245, 158, 11, 0.15); }
+        .feature-icon.pink { background: rgba(236, 72, 153, 0.15); }
+
+        .feature-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* ─── Languages Section ────────────────────────────────── */
+        .languages {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 2rem 80px;
+        }
+
+        .lang-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .lang-chip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .lang-chip:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .lang-chip .lang-emoji {
+            font-size: 18px;
+        }
+
+        /* ─── CTA Section ──────────────────────────────────────── */
+        .cta {
+            position: relative;
+            z-index: 1;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 80px 2rem;
+            text-align: center;
+        }
+
+        .cta-box {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(6, 182, 212, 0.1));
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 24px;
+            padding: 60px 40px;
+        }
+
+        .cta-box h2 {
+            font-size: 2rem;
+            font-weight: 800;
+            margin-bottom: 16px;
+        }
+
+        .cta-box p {
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+            font-size: 1.05rem;
+        }
+
+        /* ─── Footer ───────────────────────────────────────────── */
+        footer {
+            position: relative;
+            z-index: 1;
+            border-top: 1px solid var(--border);
+            padding: 32px 2rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        footer a {
+            color: var(--accent-light);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* ─── Animations ───────────────────────────────────────── */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* ─── Responsive ───────────────────────────────────────── */
+        @media (max-width: 768px) {
+            .hero { padding: 120px 1.5rem 60px; }
+            .hero h1 { letter-spacing: -1px; }
+            .ide-ai-panel { display: none; }
+            .ide-body { min-height: 300px; }
+            .ide-terminal { height: 80px; }
+            .features-grid { grid-template-columns: 1fr; }
+            .nav-links { display: none; }
+            .ide-sidebar { width: 40px; }
+            .ide-sidebar-icon { width: 30px; height: 30px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Background Effects -->
+<div class="bg-grid"></div>
+<div class="bg-glow bg-glow-1"></div>
+<div class="bg-glow bg-glow-2"></div>
+
+<!-- Navigation -->
+<nav>
+    <a href="#" class="nav-brand">
+        <div class="nav-brand-icon">CF</div>
+        <span class="nav-brand-text">CodeForge</span>
+    </a>
+    <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#languages">Languages</a></li>
+        <li><a href="https://github.com/ajvaraprasad/online-compiler" target="_blank">GitHub</a></li>
+        <li><a href="https://github.com/ajvaraprasad/online-compiler" class="nav-cta" target="_blank">⭐ Star on GitHub</a></li>
+    </ul>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+    <div class="hero-badge">
+        <span class="dot"></span>
+        Open Source • Powered by Gemini AI
+    </div>
+    <h1>
+        Write. Compile. Run.<br>
+        <span class="gradient">All in Your Browser.</span>
+    </h1>
+    <p>
+        A full-featured online compiler IDE with real-time code execution, integrated terminal, and Google Gemini AI assistance.
+    </p>
+    <div class="hero-buttons">
+        <a href="https://github.com/ajvaraprasad/online-compiler" target="_blank" class="btn btn-primary">
+            🚀 Get Started
+        </a>
+        <a href="#features" class="btn btn-secondary">
+            ✨ Explore Features
+        </a>
+    </div>
+</section>
+
+<!-- IDE Preview -->
+<section class="ide-preview">
+    <div class="ide-window">
+        <div class="ide-titlebar">
+            <div class="ide-dot red"></div>
+            <div class="ide-dot yellow"></div>
+            <div class="ide-dot green"></div>
+            <span class="ide-titlebar-text">CodeForge IDE — main.py</span>
+        </div>
+        <div class="ide-body">
+            <!-- Sidebar -->
+            <div class="ide-sidebar">
+                <div class="ide-sidebar-icon active">📁</div>
+                <div class="ide-sidebar-icon">🔍</div>
+                <div class="ide-sidebar-icon">⚙️</div>
+                <div class="ide-sidebar-icon purple">✨</div>
+            </div>
+            <!-- Editor -->
+            <div class="ide-editor-area">
+                <div class="ide-tabs">
+                    <div class="ide-tab active">
+                        🐍 main.py
+                    </div>
+                    <div class="ide-tab">
+                        📄 app.js
+                    </div>
+                </div>
+                <div class="ide-code">
+                    <div class="line"><span class="line-num">1</span><span class="line-content"><span class="syn-keyword">def</span> <span class="syn-function">fibonacci</span><span class="syn-operator">(</span><span class="syn-variable">n</span><span class="syn-operator">):</span></span></div>
+                    <div class="line"><span class="line-num">2</span><span class="line-content">    <span class="syn-string">"""Generate Fibonacci sequence up to n"""</span></span></div>
+                    <div class="line"><span class="line-num">3</span><span class="line-content">    <span class="syn-keyword">if</span> <span class="syn-variable">n</span> <span class="syn-operator">&lt;=</span> <span class="syn-number">0</span><span class="syn-operator">:</span></span></div>
+                    <div class="line"><span class="line-num">4</span><span class="line-content">        <span class="syn-keyword">return</span> <span class="syn-operator">[]</span></span></div>
+                    <div class="line"><span class="line-num">5</span><span class="line-content">    <span class="syn-keyword">elif</span> <span class="syn-variable">n</span> <span class="syn-operator">==</span> <span class="syn-number">1</span><span class="syn-operator">:</span></span></div>
+                    <div class="line"><span class="line-num">6</span><span class="line-content">        <span class="syn-keyword">return</span> <span class="syn-operator">[</span><span class="syn-number">0</span><span class="syn-operator">]</span></span></div>
+                    <div class="line"><span class="line-num">7</span><span class="line-content">    </span></div>
+                    <div class="line"><span class="line-num">8</span><span class="line-content">    <span class="syn-variable">seq</span> <span class="syn-operator">=</span> <span class="syn-operator">[</span><span class="syn-number">0</span><span class="syn-operator">,</span> <span class="syn-number">1</span><span class="syn-operator">]</span></span></div>
+                    <div class="line"><span class="line-num">9</span><span class="line-content">    <span class="syn-keyword">while</span> <span class="syn-builtin">len</span><span class="syn-operator">(</span><span class="syn-variable">seq</span><span class="syn-operator">)</span> <span class="syn-operator">&lt;</span> <span class="syn-variable">n</span><span class="syn-operator">:</span></span></div>
+                    <div class="line"><span class="line-num">10</span><span class="line-content">        <span class="syn-variable">seq</span><span class="syn-operator">.</span><span class="syn-function">append</span><span class="syn-operator">(</span><span class="syn-variable">seq</span><span class="syn-operator">[-</span><span class="syn-number">1</span><span class="syn-operator">]</span> <span class="syn-operator">+</span> <span class="syn-variable">seq</span><span class="syn-operator">[-</span><span class="syn-number">2</span><span class="syn-operator">])</span></span></div>
+                    <div class="line"><span class="line-num">11</span><span class="line-content">    <span class="syn-keyword">return</span> <span class="syn-variable">seq</span></span></div>
+                    <div class="line"><span class="line-num">12</span><span class="line-content"></span></div>
+                    <div class="line"><span class="line-num">13</span><span class="line-content"><span class="syn-comment"># Print first 10 Fibonacci numbers</span></span></div>
+                    <div class="line"><span class="line-num">14</span><span class="line-content"><span class="syn-builtin">print</span><span class="syn-operator">(</span><span class="syn-function">fibonacci</span><span class="syn-operator">(</span><span class="syn-number">10</span><span class="syn-operator">))</span></span></div>
+                </div>
+                <!-- Terminal -->
+                <div class="ide-terminal">
+                    <span class="terminal-prompt">$</span> python main.py<br>
+                    <span class="terminal-output">[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]</span><br>
+                    <span class="terminal-prompt">$</span> <span style="animation: pulse 1s infinite;">▋</span>
+                </div>
+            </div>
+            <!-- AI Panel -->
+            <div class="ide-ai-panel">
+                <div class="ide-ai-header">
+                    ✨ AI ASSISTANT
+                    <span class="gemini-badge">Gemini</span>
+                </div>
+                <div class="ide-ai-body">
+                    <div class="ai-quick-actions">
+                        <span class="ai-action-btn">📖 Explain</span>
+                        <span class="ai-action-btn">🐛 Fix</span>
+                        <span class="ai-action-btn">⚡ Optimize</span>
+                        <span class="ai-action-btn">🧪 Test</span>
+                        <span class="ai-action-btn">🔄 Refactor</span>
+                    </div>
+                    <div class="ai-message user">
+                        Explain this code
+                    </div>
+                    <div class="ai-message assistant">
+                        This function generates a Fibonacci sequence. It starts with [0, 1] and iteratively appends the sum of the last two elements until the sequence reaches length <code>n</code>. Time complexity: O(n).
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features -->
+<section class="features" id="features">
+    <div class="section-header">
+        <h2>Everything You Need to <span style="color: var(--accent-light);">Code</span></h2>
+        <p>Professional-grade development tools, right in your browser.</p>
+    </div>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon purple">✏️</div>
+            <h3>Monaco Editor</h3>
+            <p>The same VS Code engine that powers the world's most popular editor. Syntax highlighting, autocomplete, multi-cursor, and more.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon cyan">🚀</div>
+            <h3>Real-time Execution</h3>
+            <p>Run Python, JavaScript, C, C++, and Java code instantly. See output in real-time with execution timing and error reporting.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon purple">✨</div>
+            <h3>Gemini AI Assistant</h3>
+            <p>Explain, fix, optimize, test, and refactor code with Google Gemini AI. Get instant, intelligent suggestions in a streaming chat.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon green">💻</div>
+            <h3>Integrated Terminal</h3>
+            <p>Full PTY terminal powered by xterm.js with WebSocket communication. Support for stdin, stdout, and stderr output streaming.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon yellow">📁</div>
+            <h3>File Explorer</h3>
+            <p>Create, organize, and manage files and folders. Per-user workspaces with persistent storage across sessions.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon pink">🔐</div>
+            <h3>Secure & Private</h3>
+            <p>API keys stay server-side. User authentication with bcrypt hashing and JWT tokens. Each workspace is isolated.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Languages -->
+<section class="languages" id="languages">
+    <div class="section-header">
+        <h2>10+ Languages <span style="color: var(--cyan);">Supported</span></h2>
+        <p>Write and execute code in your favorite language.</p>
+    </div>
+    <div class="lang-grid">
+        <div class="lang-chip"><span class="lang-emoji">🐍</span> Python</div>
+        <div class="lang-chip"><span class="lang-emoji">🟨</span> JavaScript</div>
+        <div class="lang-chip"><span class="lang-emoji">🔷</span> TypeScript</div>
+        <div class="lang-chip"><span class="lang-emoji">🔵</span> C</div>
+        <div class="lang-chip"><span class="lang-emoji">🟦</span> C++</div>
+        <div class="lang-chip"><span class="lang-emoji">☕</span> Java</div>
+        <div class="lang-chip"><span class="lang-emoji">🌐</span> HTML</div>
+        <div class="lang-chip"><span class="lang-emoji">🎨</span> CSS</div>
+        <div class="lang-chip"><span class="lang-emoji">📋</span> JSON</div>
+        <div class="lang-chip"><span class="lang-emoji">📝</span> Markdown</div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+    <div class="cta-box">
+        <h2>Ready to Code? ⚡</h2>
+        <p>Set up CodeForge IDE in minutes. Clone, configure, and start coding.</p>
+        <div class="hero-buttons">
+            <a href="https://github.com/ajvaraprasad/online-compiler" target="_blank" class="btn btn-primary">
+                🚀 Clone on GitHub
+            </a>
+            <a href="https://github.com/ajvaraprasad/online-compiler#-getting-started" target="_blank" class="btn btn-secondary">
+                📖 Read the Docs
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer>
+    <p>
+        CodeForge IDE — Built with ❤️ using <a href="https://nextjs.org" target="_blank">Next.js</a>,
+        <a href="https://www.typescriptlang.org" target="_blank">TypeScript</a>, and
+        <a href="https://ai.google.dev" target="_blank">Google Gemini AI</a>
+    </p>
+    <p style="margin-top: 8px;">
+        <a href="https://github.com/ajvaraprasad/online-compiler" target="_blank">GitHub</a> •
+        <a href="https://github.com/ajvaraprasad/online-compiler/blob/main/LICENSE" target="_blank">MIT License</a>
+    </p>
+</footer>
+
+</body>
+</html>
